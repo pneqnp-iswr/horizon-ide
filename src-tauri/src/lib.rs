@@ -820,6 +820,16 @@ async fn run_game_item_smoke(
         .map_err(AppError::SmokeFailed)
 }
 
+/// Read names exposed by a trusted local LM Studio / Ollama server.
+/// This sends no editor context and cannot address arbitrary hosts.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+async fn list_local_ai_models(provider: String) -> Result<local_ai::LocalAiModels, AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        local_ai::list_models(&provider).map_err(AppError::LocalAiFailed)
+    }).await.map_err(|e| AppError::LocalAiFailed(e.to_string()))?
+}
+
 /// Ask only the fixed 127.0.0.1 LM Studio / Ollama HTTP endpoints.
 /// This command can never edit files, invoke build tools or reach remote hosts.
 #[cfg(feature = "desktop")]
@@ -855,6 +865,7 @@ pub fn run() {
             run_build,
             build_content_mod,
             cancel_build,
+            list_local_ai_models,
             ask_local_ai,
             create_content_starter,
             check_hmod_package,
