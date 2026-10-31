@@ -144,7 +144,8 @@ fn check_report(output: &str, actual_hash: &str, artifact: &Path) -> Result<(Str
     if id.is_empty() || id.len() > 64 || !id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') {
         return Err("invalid mod id reported by checker".into());
     }
-    if artifact.file_name().and_then(|n| n.to_str()) != Some(&format!("{id}.hmod")) {
+    let expected_name = format!("{id}.hmod");
+    if artifact.file_name().and_then(|n| n.to_str()) != Some(expected_name.as_str()) {
         return Err("artifact file name does not match the checked mod ID".into());
     }
     Ok((id.to_owned(), field("version")?.to_owned(), field("api")?.to_owned()))
