@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
-import { cancelBuild, checkHmodPackage, createContentStarter, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile } from './services/tauri/client';
+import { buildContentMod, cancelBuild, checkHmodPackage, createContentStarter, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile } from './services/tauri/client';
 
 vi.mock('@monaco-editor/react', () => ({
   default: ({ value, onChange }: { value: string; onChange: (text: string) => void }) => (
@@ -37,6 +37,16 @@ vi.mock('./services/tauri/client', () => ({
   launchGame: vi.fn().mockResolvedValue('running'),
   listDirectory: vi.fn().mockResolvedValue([]),
   readTextFile: vi.fn().mockResolvedValue({ contents: '', revision: 'a'.repeat(64) }),
+  buildContentMod: vi.fn().mockResolvedValue({
+    succeeded: true,
+    artifactPath: 'C:/dev/mod/target/horizon-mod/ruby.hmod',
+    sha256: 'a'.repeat(64),
+    modId: 'ruby',
+    version: '0.1.0',
+    contentApi: '0.2',
+    staticCheckPassed: true,
+    inGameVerified: false,
+  }),
   runBuild: vi.fn().mockResolvedValue({
     success: true, cancelled: false, timedOut: false, outputTruncated: false,
     output: 'ok', diagnostics: [],
@@ -213,6 +223,33 @@ describe('App', () => {
       'C:/Users/dev/.cargo/bin/cargo-horizon-mod.exe',
       'C:/dev/mod/target/mod.hmod',
       'ruby:ruby', 'C:/Horizon/prepared/26.3', true,
+    );
+  });
+
+  it('does not build .hmod without explicit native-tool approval', () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/dev/horizon-mod'), { target: { value: 'C:/dev/mod' } });
+    fireEvent.change(screen.getByPlaceholderText('C:/Tools/cargo-horizon-mod.exe'), {
+      target: { value: 'C:/Tools/cargo-horizon-mod.exe' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Build .hmod' }));
+    expect(vi.mocked(buildContentMod)).not.toHaveBeenCalled();
+  });
+
+  it('attests and selects the actual built archive for game smoke, without claiming gameplay', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/dev/horizon-mod'), { target: { value: 'C:/dev/mod' } });
+    fireEvent.change(screen.getByPlaceholderText('C:/Tools/cargo-horizon-mod.exe'), {
+      target: { value: 'C:/Tools/cargo-horizon-mod.exe' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Build .hmod' }));
+    expect(await screen.findByText(/Built ruby .hmod.*NOT yet game-tested/)).toBeTruthy();
+    expect((screen.getByPlaceholderText('C:/dev/mod/target/mod.hmod') as HTMLInputElement).value)
+      .toBe('C:/dev/mod/target/horizon-mod/ruby.hmod');
+    expect(vi.mocked(buildContentMod)).toHaveBeenCalledWith(
+      'C:/Tools/cargo-horizon-mod.exe', 'C:/dev/mod', true,
     );
   });
 
