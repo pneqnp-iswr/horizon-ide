@@ -6,7 +6,7 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import './App.css';
 import { MockAIProvider } from './services/ai/provider';
-import { cancelBuild, getGameStatus, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
+import { cancelBuild, getGameStatus, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
 import { useWorkspaceStore } from './store/useWorkspaceStore';
 import type { BuildDiagnostic, FileEntry, GameStatus } from './types/app';
 
@@ -26,6 +26,11 @@ function App() {
   const [status, setStatus] = useState<GameStatus>('disconnected');
   const [gamePath, setGamePath] = useState('');
   const [gameProbe, setGameProbe] = useState('Select your installed horizon-client and check its Launch API.');
+  const [controlPath, setControlPath] = useState('');
+  const [packagePath, setPackagePath] = useState('');
+  const [targetItemId, setTargetItemId] = useState('');
+  const [smokeBusy, setSmokeBusy] = useState(false);
+  const [smokeStatus, setSmokeStatus] = useState('No in-game item observation has been made.');
   const [probing, setProbing] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('Create a new mob with custom AI behavior');
   const [aiResponse, setAiResponse] = useState('');
@@ -172,6 +177,33 @@ function App() {
     }
   }
 
+  async function onGameItemSmoke() {
+    if (!gamePath || !controlPath || !packagePath || !targetItemId || !workspaceRoot || smokeBusy) return;
+    if (!window.confirm(
+      'Launch your trusted Horizon client and horizon-ctl into a NEW disposable test world? ' +
+      'The selected .hmod is native content that will be loaded with user privileges. ' +
+      'This test attempts give/inventory commands, then quit. No personal saves are deliberately used. ' +
+      'Only an inventory observation is verified; package provenance and gameplay are not.',
+    )) return;
+    setSmokeBusy(true);
+    setSmokeStatus('Running isolated Horizon inventory smoke test…');
+    try {
+      await setWorkspaceRoot(workspaceRoot);
+      const report = await runGameItemSmoke(controlPath, gamePath, packagePath, targetItemId, true);
+      setSmokeStatus(
+        `Observed ${report.itemId}: ${report.before} → ${report.after}, slots: ${report.changedSlots.join(', ')}. ` +
+        'Package origin NOT verified.',
+      );
+      setBuildOutput(JSON.stringify(report, null, 2));
+      terminalInstanceRef.current?.writeln('Horizon item smoke: real inventory delta observed; package origin not proven.');
+    } catch (error) {
+      setSmokeStatus(`In-game smoke failed: ${String(error)}`);
+      terminalInstanceRef.current?.writeln(`Horizon smoke failure: ${String(error)}`);
+    } finally {
+      setSmokeBusy(false);
+    }
+  }
+
   async function onLaunchGame() {
     if (!window.confirm('Start Horizon in a new disposable test directory? Personal saves and game settings will not be used, and the test directory is deleted when the session ends.')) return;
     setStatus('launching');
@@ -272,7 +304,7 @@ function App() {
 
       <main className="workspace" style={{ gridTemplateRows: `1fr 6px ${bottomHeight}%` }}>
         <section className="top-panels">
-          <article className="panel" style={{ width: `${leftWidth}%` }}>
+          <article className="panel game-panel" style={{ width: `${leftWidth}%` }}>
             <header>
               <h2>Horizon Game</h2>
               <span data-status={status}>{gameLabel}</span>
@@ -289,6 +321,29 @@ function App() {
               <button onClick={() => void onStopGame()} disabled={status === 'disconnected'}>Stop</button>
             </div>
             <p role="status">{gameProbe}</p>
+            <details className="smoke-tools">
+              <summary>In-game content smoke test (experimental)</summary>
+              <p>Requires trusted horizon-client and horizon-ctl installed side by side. Runs a disposable test world and checks inventory slots, not package origin.</p>
+              <label>
+                horizon-ctl path
+                <input value={controlPath} onChange={(event) => setControlPath(event.target.value)} placeholder="C:/Horizon/horizon-ctl.exe" />
+              </label>
+              <label>
+                Built .hmod path (inside workspace)
+                <input value={packagePath} onChange={(event) => setPackagePath(event.target.value)} placeholder="C:/dev/mod/target/mod.hmod" />
+              </label>
+              <label>
+                Namespaced test item ID
+                <input value={targetItemId} onChange={(event) => setTargetItemId(event.target.value)} placeholder="ruby:ruby" />
+              </label>
+              <button onClick={() => void onGameItemSmoke()} disabled={
+                smokeBusy || status === 'running' || status === 'launching' ||
+                !workspaceRoot || !controlPath || !gamePath || !packagePath || !targetItemId
+              }>
+                {smokeBusy ? 'Testing in game…' : 'Test item in disposable world'}
+              </button>
+              <p role="status" aria-live="polite">{smokeStatus}</p>
+            </details>
             <p>
               Supported today: one explicitly selected horizon-client process in a disposable test game directory, isolated from personal saves. “Running” means the OS process is alive, not that a world or mod has loaded. Native game embedding and in-game testing remain unverified.
             </p>

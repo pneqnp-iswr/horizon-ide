@@ -14,10 +14,11 @@ The product goal is one seamless application with a **directly playable Horizon 
 | Source editor | Workspace-root path confinement; UTF-8 source snapshots with SHA-256 revisions, conflict-aware atomic saves and an unsaved-edits indicator | Race-free multi-editor collaboration |
 | Game client | User-selected `horizon-client[.exe]`, checked with `--launch-api`; owned OS process status, Stop, restart | A mod has loaded in a real game |
 | Session isolation | Per-launch disposable `--game-dir` and `--home`, cleaned on normal exit | Native mods are sandboxed (they are not) |
+| Item smoke (experimental) | Explicitly approved `horizon-ctl` launch with isolated game world, strict `inventory`/`give` checks and evidence panel | An inventory observation proves the selected `.hmod` defines that item; package origin is **not** verified |
 | Build runner | Explicit per-run consent, async `cargo check --locked`, JSON compiler diagnostics, bounded output/time and cancellation | Cargo build scripts cannot run code (they can) |
 | AI | Extensible provider interface with mock responses and no automatic build rights | Autonomous, production-quality AI agent |
 
-**Current code is being integrated through a series of stacked review PRs:** [#1 initial shell](https://github.com/pneqnp-iswr/horizon-ide/pull/1) → [#2 runtime](https://github.com/pneqnp-iswr/horizon-ide/pull/2) → [#7 safe saves](https://github.com/pneqnp-iswr/horizon-ide/pull/7) → [#8 build runner](https://github.com/pneqnp-iswr/horizon-ide/pull/8) → [#9 isolated game](https://github.com/pneqnp-iswr/horizon-ide/pull/9). Do not interpret an unmerged PR's capabilities as a released build.
+**Review status:** The desktop foundation, runtime hardening, safe documents, bounded builds and disposable external game sessions have been merged to `master` in PRs #1, #2, #7, #8 and #9. [#10 Game Bridge](https://github.com/pneqnp-iswr/horizon-ide/pull/10) is an experimental addition, not a verified-gameplay release.
 
 ## Development
 
@@ -59,6 +60,6 @@ Our priorities are tracked in [#3 real game tests](https://github.com/pneqnp-isw
 - Accessibility, configurable layouts, English-first UI with planned Russian translation, keyboard-driven workflow.
 - Explain evidence honestly: **schema-valid → builds → game-loaded → gameplay-tested** are different levels.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md), [ROADMAP.md](ROADMAP.md), [SECURITY.md](SECURITY.md), [Runtime Contract](docs/HORIZON_RUNTIME_CONTRACT.md) and [Build Security](docs/BUILD_SECURITY.md).
+See [ARCHITECTURE.md](ARCHITECTURE.md), [ROADMAP.md](ROADMAP.md), [SECURITY.md](SECURITY.md), [Runtime Contract](docs/HORIZON_RUNTIME_CONTRACT.md), [Build Security](docs/BUILD_SECURITY.md), and [Experimental Game Item Smoke](docs/GAME_ITEM_SMOKE.md).
 
 License: MIT. Horizon IDE is an independent project and is not endorsed by Mojang, Microsoft or Horizon maintainers.

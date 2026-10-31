@@ -36,3 +36,22 @@ export interface DocumentSnapshot {
   contents: string;
   revision: string;
 }
+
+/** Evidence from a real isolated horizon-ctl item observation.
+ * This is not proof the supplied archive contains the item. */
+export interface GameItemSmokeReport {
+  schema: 'horizon-ide.item-smoke/1';
+  level: 'inventory-observed';
+  itemId: string;
+  packageSha256: string;
+  packageItemOriginVerified: false;
+  gameVersion: string | null;
+  launchAccepted: boolean;
+  negativeControlRefused: boolean;
+  exactSlotDelta: boolean;
+  before: number;
+  after: number;
+  changedSlots: number[];
+  sessionCleaned: boolean;
+  notes: string[];
+}
