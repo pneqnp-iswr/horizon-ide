@@ -188,6 +188,7 @@ function App() {
     setSmokeBusy(true);
     setSmokeStatus('Running isolated Horizon inventory smoke test…');
     try {
+      await setWorkspaceRoot(workspaceRoot);
       const report = await runGameItemSmoke(controlPath, gamePath, packagePath, targetItemId, true);
       setSmokeStatus(
         `Observed ${report.itemId}: ${report.before} → ${report.after}, slots: ${report.changedSlots.join(', ')}. ` +
