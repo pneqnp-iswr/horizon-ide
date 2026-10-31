@@ -100,13 +100,13 @@ fn run_bounded(binary: &Path, args: &[String], timeout: Duration) -> Result<(Exi
     Ok((status, output))
 }
 
-fn parse_reply(status: ExitStatus, output: &str) -> Result<Value, SmokeError> {
+fn parse_reply(success: bool, output: &str) -> Result<Value, SmokeError> {
     let last = output.lines().rev().find(|line| !line.trim().is_empty())
         .ok_or_else(|| SmokeError("horizon-ctl returned empty JSON".into()))?;
     let value: Value = serde_json::from_str(last)
         .map_err(|_| SmokeError("horizon-ctl returned invalid JSON".into()))?;
     if !value.is_object() { return Err(SmokeError("control reply must be an object".into())); }
-    if !status.success() || value.get("error").is_some() {
+    if !success || value.get("error").is_some() {
         // Do not interpolate untrusted game error text into a command or HTML.
         let detail = value.get("error").and_then(Value::as_str).unwrap_or("command rejected");
         return Err(SmokeError(format!("GAME_REJECTED: {}", detail.chars().take(200).collect::<String>())));
@@ -118,7 +118,7 @@ fn call(ctl: &Path, socket: &Path, command: &[&str], timeout: Duration) -> Resul
     let mut args = vec!["--socket".to_string(), socket.display().to_string()];
     args.extend(command.iter().map(|a| (*a).to_owned()));
     let (status, stdout) = run_bounded(ctl, &args, timeout)?;
-    parse_reply(status, &stdout)
+    parse_reply(status.success(), &stdout)
 }
 
 fn session_dir() -> Result<PathBuf, SmokeError> {
@@ -297,10 +297,10 @@ mod tests {
 
     #[test]
     fn reply_rejects_success_false_and_malformed_reply() {
-        let good = ExitStatus::from_raw_for_test(0);
-        assert_eq!(parse_reply(good, "{\"ok\":true}\n").unwrap()["ok"], json!(true));
-        assert!(parse_reply(good, "[]\n").is_err());
-        assert!(parse_reply(good, "{\"error\":\"unknown item\"}\n").is_err());
-        assert!(parse_reply(good, "not-json").is_err());
+        assert_eq!(parse_reply(true, "{\"ok\":true}\n").unwrap()["ok"], json!(true));
+        assert!(parse_reply(true, "[]\n").is_err());
+        assert!(parse_reply(true, "{\"error\":\"unknown item\"}\n").is_err());
+        assert!(parse_reply(true, "not-json").is_err());
+        assert!(parse_reply(false, "{\"ok\":true}\n").is_err());
     }
 }
