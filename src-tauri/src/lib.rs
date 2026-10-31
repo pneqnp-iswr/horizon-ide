@@ -594,13 +594,13 @@ fn stop_game(state: State<AppState>) -> Result<(), AppError> {
 /// by this Tauri session. Reports discovery only, never claims embed/playability.
 #[cfg(feature = "desktop")]
 #[tauri::command]
-async fn get_game_window_probe(state: State<'_, AppState>) -> game_window::GameWindowProbe {
+async fn get_game_window_probe(state: State<'_, AppState>) -> Result<game_window::GameWindowProbe, AppError> {
     // Reap a dead child so an old PID is not reused as a discovery target.
     refresh_game_process(&state);
     let pid = state.game_process.lock().expect("game lock poisoned")
         .as_ref().map(std::process::Child::id);
     tauri::async_runtime::spawn_blocking(move || game_window::probe(pid))
-        .await.unwrap_or_else(|_| game_window::probe(None))
+        .await.map_err(|e| AppError::SmokeFailed(format!("native window probe task failed: {e}")))
 }
 
 #[cfg(feature = "desktop")]
