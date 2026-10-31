@@ -675,6 +675,28 @@ fn cancel_build(state: State<AppState>) -> bool {
     true
 }
 
+/// Official package static check without launching Horizon. The selected
+/// checker itself is trusted native code; explicit user approval is required.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+async fn check_hmod_package(
+    checker_path: String,
+    package_path: String,
+    item_id: String,
+    approved: bool,
+    state: State<'_, AppState>,
+) -> Result<package_attestation::ContentAttestation, AppError> {
+    if !approved { return Err(AppError::BuildApprovalRequired); }
+    let checker = PathBuf::from(checker_path).canonicalize()?;
+    let root = state.workspace_root.lock().expect("workspace root lock poisoned")
+        .clone().ok_or(AppError::MissingWorkspaceRoot)?;
+    let package = ensure_within_workspace(&root, Path::new(&package_path))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        game_control::check_package(&checker, &package, &item_id)
+            .map_err(|error| AppError::SmokeFailed(error.to_string()))
+    }).await.map_err(|error| AppError::SmokeFailed(error.to_string()))?
+}
+
 /// Runs against a fresh disposable world only. No player account or
 /// personal saves are intentionally used. The result is inventory-observed
 /// evidence, NOT a verified package-to-item attribution.
@@ -737,6 +759,7 @@ pub fn run() {
             get_game_status,
             run_build,
             cancel_build,
+            check_hmod_package,
             run_game_item_smoke
         ])
         .run(tauri::generate_context!())
