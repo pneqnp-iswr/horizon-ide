@@ -101,3 +101,8 @@ export interface LocalAiAnswer {
   proposedChangesApplied: false;
   commandsExecuted: false;
 }
+
+export interface LocalAiModels {
+  provider: 'lmstudio' | 'ollama';
+  models: string[];
+}
