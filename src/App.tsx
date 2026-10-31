@@ -336,25 +336,27 @@ function App() {
       const commandKey = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
       if (commandKey && !event.shiftKey && key === 's') {
-        if (selectedFile && !savingFile) {
-          event.preventDefault();
-          void saveCurrentFile();
-        }
+        // The WebView's default Save Page dialog must never appear in an IDE.
+        event.preventDefault();
+        if (selectedFile && !savingFile) void saveCurrentFile();
         return;
       }
       if (commandKey && event.shiftKey && key === 'b') {
+        event.preventDefault();
         if (workspaceRoot && checkerPath && !buildBusy) {
-          event.preventDefault();
           void onBuildContentMod();
+        } else if (!checkerPath) {
+          setBuildOutput('Choose the trusted cargo-horizon-mod executable in New Horizon Content Mod first.');
         }
         return;
       }
       if (!commandKey && event.key === 'F5') {
-        if (!event.shiftKey && status === 'disconnected' && gamePath.trim()) {
-          event.preventDefault();
-          void onLaunchGame();
+        // Prevent a WebView reload, which could destroy unsaved editor state.
+        event.preventDefault();
+        if (!event.shiftKey && status === 'disconnected') {
+          if (gamePath.trim()) void onLaunchGame();
+          else setGameProbe('Select your trusted horizon-client executable before pressing F5.');
         } else if (event.shiftKey && (status === 'running' || status === 'launching')) {
-          event.preventDefault();
           void onStopGame();
         }
       }
