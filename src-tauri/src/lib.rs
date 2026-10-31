@@ -1,9 +1,12 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
-    fs,
+    fs::{self, OpenOptions},
+    io::Write,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::Mutex,
+    sync::{atomic::{AtomicU64, Ordering}, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 #[cfg(feature = "desktop")]
@@ -17,6 +20,12 @@ enum AppError {
     PathOutsideWorkspace,
     #[error("path not found: {0}")]
     MissingPath(String),
+    #[error("the file changed since it was opened; reload or compare before saving")]
+    RevisionConflict,
+    #[error("only existing UTF-8 files of at most 2 MiB may be edited")]
+    UnsupportedDocument,
+    #[error("invalid document revision")]
+    InvalidRevision,
     #[error("invalid launch request")]
     InvalidLaunchRequest,
     #[error("Horizon is already running in this IDE session")]
@@ -41,6 +50,7 @@ impl serde::Serialize for AppError {
 #[derive(Default)]
 struct AppState {
     workspace_root: Mutex<Option<PathBuf>>,
+    document_write_lock: Mutex<()>,
     game_status: Mutex<GameStatus>,
     game_process: Mutex<Option<Child>>,
 }
@@ -146,21 +156,125 @@ fn list_directory(path: String, state: State<AppState>) -> Result<Vec<FileEntry>
     Ok(entries)
 }
 
-#[cfg(feature = "desktop")]
-#[tauri::command]
-fn read_text_file(path: String, state: State<AppState>) -> Result<String, AppError> {
-    let root = state.workspace_root.lock().expect("workspace root lock poisoned").clone().ok_or(AppError::MissingWorkspaceRoot)?;
-    let resolved = ensure_within_workspace(&root, Path::new(&path))?;
-    Ok(fs::read_to_string(resolved)?)
+const MAX_DOCUMENT_BYTES: usize = 2 * 1024 * 1024;
+static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentSnapshot {
+    contents: String,
+    revision: String,
+}
+
+fn content_revision(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn read_workspace_document(root: &Path, target: &Path) -> Result<DocumentSnapshot, AppError> {
+    let resolved = ensure_within_workspace(root, target)?;
+    let metadata = fs::metadata(&resolved)?;
+    if !metadata.is_file() || metadata.len() > MAX_DOCUMENT_BYTES as u64 {
+        return Err(AppError::UnsupportedDocument);
+    }
+    let bytes = fs::read(&resolved)?;
+    if bytes.len() > MAX_DOCUMENT_BYTES {
+        return Err(AppError::UnsupportedDocument);
+    }
+    let contents = String::from_utf8(bytes.clone()).map_err(|_| AppError::UnsupportedDocument)?;
+    Ok(DocumentSnapshot { contents, revision: content_revision(&bytes) })
+}
+
+struct PendingTempFile(PathBuf);
+
+impl Drop for PendingTempFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+/// Writes only existing UTF-8 files. The revision check is content-addressed:
+/// concurrent IDE commands are serialized by AppState, while external editors
+/// are detected if their changes occur before the final pre-rename recheck.
+/// (Handle-relative filesystem operations would be needed for a complete
+/// cross-process symlink race guarantee; this method does not claim one.)
+fn save_workspace_document(
+    root: &Path,
+    target: &Path,
+    expected_revision: &str,
+    contents: &str,
+) -> Result<DocumentSnapshot, AppError> {
+    if expected_revision.len() != 64 || !expected_revision.bytes().all(|c| c.is_ascii_hexdigit()) {
+        return Err(AppError::InvalidRevision);
+    }
+    if contents.len() > MAX_DOCUMENT_BYTES {
+        return Err(AppError::UnsupportedDocument);
+    }
+    let resolved = ensure_within_workspace(root, target)?;
+    if fs::symlink_metadata(&resolved)?.file_type().is_symlink() {
+        return Err(AppError::PathOutsideWorkspace);
+    }
+    let previous = read_workspace_document(root, &resolved)?;
+    if previous.revision != expected_revision {
+        return Err(AppError::RevisionConflict);
+    }
+    let next_revision = content_revision(contents.as_bytes());
+    if next_revision == previous.revision {
+        return Ok(previous);
+    }
+    let parent = resolved.parent().ok_or(AppError::PathOutsideWorkspace)?;
+    let permissions = fs::metadata(&resolved)?.permissions();
+
+    let (temp_guard, mut file) = {
+        let mut candidate = None;
+        for _ in 0..8 {
+            let nanos = SystemTime::now().duration_since(UNIX_EPOCH)
+                .unwrap_or_default().as_nanos();
+            let seq = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let name = format!(".horizon-ide-{}-{nanos}-{seq}.tmp", std::process::id());
+            let path = parent.join(name);
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(file) => { candidate = Some((PendingTempFile(path), file)); break; }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(AppError::Io(error)),
+            }
+        }
+        candidate.ok_or(AppError::UnsupportedDocument)?
+    };
+
+    file.write_all(contents.as_bytes())?;
+    file.sync_all()?;
+    drop(file);
+    fs::set_permissions(&temp_guard.0, permissions)?;
+
+    // Detect external changes made during temporary-file writing whenever
+    // possible; never overwrite a newer version we have already observed.
+    if read_workspace_document(root, &resolved)?.revision != expected_revision {
+        return Err(AppError::RevisionConflict);
+    }
+    fs::rename(&temp_guard.0, &resolved)?;
+    Ok(DocumentSnapshot { contents: contents.to_owned(), revision: next_revision })
 }
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-fn write_text_file(path: String, contents: String, state: State<AppState>) -> Result<(), AppError> {
-    let root = state.workspace_root.lock().expect("workspace root lock poisoned").clone().ok_or(AppError::MissingWorkspaceRoot)?;
-    let resolved = ensure_within_workspace(&root, Path::new(&path))?;
-    fs::write(resolved, contents)?;
-    Ok(())
+fn read_document(path: String, state: State<AppState>) -> Result<DocumentSnapshot, AppError> {
+    let root = state.workspace_root.lock().expect("workspace root lock poisoned")
+        .clone().ok_or(AppError::MissingWorkspaceRoot)?;
+    read_workspace_document(&root, Path::new(&path))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn write_document(
+    path: String,
+    contents: String,
+    expected_revision: String,
+    state: State<AppState>,
+) -> Result<DocumentSnapshot, AppError> {
+    let root = state.workspace_root.lock().expect("workspace root lock poisoned")
+        .clone().ok_or(AppError::MissingWorkspaceRoot)?;
+    let _guard = state.document_write_lock.lock().expect("document lock poisoned");
+    save_workspace_document(&root, Path::new(&path), &expected_revision, &contents)
 }
 
 /// Only an explicitly selected local Horizon client can be started. The first
@@ -425,8 +539,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             set_workspace_root,
             list_directory,
-            read_text_file,
-            write_text_file,
+            read_document,
+            write_document,
             inspect_horizon_client,
             launch_game,
             stop_game,
@@ -445,6 +559,60 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn documents_save_atomically_and_refuse_stale_revision() {
+        let root = std::env::temp_dir().join(format!(
+            "horizon-ide-document-{}-{}",
+            std::process::id(),
+            TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("mod.rs");
+        fs::write(&path, "before").unwrap();
+        let first = read_workspace_document(&root, &path).unwrap();
+        assert_eq!(first.contents, "before");
+        assert_eq!(first.revision.len(), 64);
+        let next = save_workspace_document(&root, &path, &first.revision, "after").unwrap();
+        assert_eq!(next.contents, "after");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "after");
+        assert!(matches!(
+            save_workspace_document(&root, &path, &first.revision, "stale"),
+            Err(AppError::RevisionConflict)
+        ));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "after");
+        let entries = fs::read_dir(&root).unwrap().count();
+        assert_eq!(entries, 1, "temporary artifacts must be removed");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn documents_reject_outside_paths_binary_files_and_oversized_changes() {
+        let root = std::env::temp_dir().join(format!(
+            "horizon-ide-security-{}-{}",
+            std::process::id(),
+            TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let binary = root.join("asset.bin");
+        fs::write(&binary, [0, 159, 146, 150]).unwrap();
+        assert!(matches!(read_workspace_document(&root, &binary), Err(AppError::UnsupportedDocument)));
+        let outside = root.parent().unwrap();
+        assert!(matches!(read_workspace_document(&root, outside), Err(AppError::PathOutsideWorkspace)));
+        let source = root.join("main.rs");
+        fs::write(&source, "ok").unwrap();
+        let revision = read_workspace_document(&root, &source).unwrap().revision;
+        assert!(matches!(
+            save_workspace_document(&root, &source, &revision, &"x".repeat(MAX_DOCUMENT_BYTES + 1)),
+            Err(AppError::UnsupportedDocument)
+        ));
+        assert!(matches!(
+            save_workspace_document(&root, &source, "bad", "changed"),
+            Err(AppError::InvalidRevision)
+        ));
+        assert_eq!(fs::read_to_string(source).unwrap(), "ok");
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn launch_api_probe_checks_required_options_without_claiming_gameplay() {

@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { BuildResult, FileEntry, GameStatus, HorizonInstallationReport } from '../../types/app';
+import type { BuildResult, DocumentSnapshot, FileEntry, GameStatus, HorizonInstallationReport } from '../../types/app';
 
 export async function setWorkspaceRoot(path: string): Promise<void> {
   await invoke('set_workspace_root', { path });
@@ -9,12 +9,12 @@ export async function listDirectory(path: string): Promise<FileEntry[]> {
   return invoke<FileEntry[]>('list_directory', { path });
 }
 
-export async function readTextFile(path: string): Promise<string> {
-  return invoke<string>('read_text_file', { path });
+export async function readTextFile(path: string): Promise<DocumentSnapshot> {
+  return invoke<DocumentSnapshot>('read_document', { path });
 }
 
-export async function saveTextFile(path: string, contents: string): Promise<void> {
-  await invoke('write_text_file', { path, contents });
+export async function saveTextFile(path: string, contents: string, expectedRevision: string): Promise<DocumentSnapshot> {
+  return invoke<DocumentSnapshot>('write_document', { path, contents, expectedRevision });
 }
 
 export async function inspectHorizonClient(executablePath: string): Promise<HorizonInstallationReport> {

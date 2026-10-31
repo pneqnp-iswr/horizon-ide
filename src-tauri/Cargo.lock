@@ -1201,6 +1201,7 @@ name = "horizon-ide"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "sha2",
  "serde_json",
  "tauri",
  "tauri-build",
