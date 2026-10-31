@@ -327,6 +327,44 @@ function App() {
     setAiResponse(response.content);
   }
 
+  // Editor shortcuts operate inside the actual Tauri workspace, never by
+  // silently executing source in a browser. Native process actions retain
+  // the same explicit confirmation as their visible buttons.
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (event.repeat || event.isComposing || event.altKey) return;
+      const commandKey = event.ctrlKey || event.metaKey;
+      const key = event.key.toLowerCase();
+      if (commandKey && !event.shiftKey && key === 's') {
+        if (selectedFile && !savingFile) {
+          event.preventDefault();
+          void saveCurrentFile();
+        }
+        return;
+      }
+      if (commandKey && event.shiftKey && key === 'b') {
+        if (workspaceRoot && checkerPath && !buildBusy) {
+          event.preventDefault();
+          void onBuildContentMod();
+        }
+        return;
+      }
+      if (!commandKey && event.key === 'F5') {
+        if (!event.shiftKey && status === 'disconnected' && gamePath.trim()) {
+          event.preventDefault();
+          void onLaunchGame();
+        } else if (event.shiftKey && (status === 'running' || status === 'launching')) {
+          event.preventDefault();
+          void onStopGame();
+        }
+      }
+    };
+    // Capture before Monaco so these workspace shortcuts are consistent in
+    // panels, while ordinary editor keystrokes are untouched.
+    window.addEventListener('keydown', handleShortcut, true);
+    return () => window.removeEventListener('keydown', handleShortcut, true);
+  });
+
   function attachHorizontalResize(event: ReactMouseEvent<HTMLDivElement>) {
     event.preventDefault();
     const startX = event.clientX;
@@ -364,6 +402,7 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <h1>Horizon IDE</h1>
+        <p className="shortcut-legend">Ctrl+S Save · Ctrl+Shift+B Build .hmod · F5 Launch · Shift+F5 Stop</p>
         <label>
           Workspace Root
           <input
