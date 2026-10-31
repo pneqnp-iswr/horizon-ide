@@ -1,3 +1,24 @@
+export interface NativeGameWindow {
+  title: string;
+  width: number;
+  height: number;
+  visible: boolean;
+  topLevel: boolean;
+  processId: number;
+  nativeHandle: string;
+}
+
+/** Native Win32 HWND discovery is not an embedded or playable game viewport. */
+export interface NativeGameWindowProbe {
+  status: 'not-running' | 'native-window-found' | 'no-native-window' | 'unsupported-platform';
+  processId: number | null;
+  selected: NativeGameWindow | null;
+  candidateCount: number;
+  embedded: false;
+  playableVerified: false;
+  warning: string;
+}
+
 export type GameStatus = 'disconnected' | 'launching' | 'running' | 'error';
 
 export interface FileEntry {
