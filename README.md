@@ -4,7 +4,7 @@
 
 The product goal is one seamless application with a **directly playable Horizon viewport** beside a full code editor, AI coding assistant, project explorer and diagnostics console. Build, verify and observe changes in a disposable test world without repeatedly switching apps.
 
-> **Engineering preview — not a finished integrated game IDE.** This repository has a working initial Tauri/React desktop shell and a developer workflow. The current game panel starts an **external** Horizon process, not embedded gameplay. The AI provider is **a clearly marked mock**. Real mod-load/gameplay tests, native embedding and live reload are still gated.
+> **Engineering preview — not a finished integrated game IDE.** This repository has a working initial Tauri/React desktop shell and a developer workflow. The current game panel starts an **external** Horizon process, not embedded gameplay. The AI pane can use user-run LM Studio or Ollama on localhost; **demo mode remains clearly marked as a mock**. Real mod-load/gameplay tests, native embedding and live reload are still gated.
 
 ## Current foundation
 
@@ -17,7 +17,7 @@ The product goal is one seamless application with a **directly playable Horizon 
 | Item smoke (experimental) | Explicitly approved `horizon-ctl` launch with isolated game world, strict `inventory`/`give` checks and evidence panel | An inventory observation proves the selected `.hmod` defines that item; package origin is **not** verified |
 | Build runner | Explicit per-run consent, async `cargo check --locked`, JSON compiler diagnostics, bounded output/time and cancellation | Cargo build scripts cannot run code (they can) |
 | Official content mod workflow | `cargo-horizon-mod new`, real `.hmod` build, official checksum check, and package auto-selection for isolated smoke | That the running game actually accepted the archive or its content |
-| AI | Extensible provider interface with mock responses and no automatic build rights | Autonomous, production-quality AI agent |
+| AI | Real native loopback-only LM Studio/Ollama chat adapter, local model discovery, opt-in document context and read-only suggestions; optional mock demo | Automatic patch application, remote services or autonomous coding agent |
 
 **Integration status:** Desktop foundation (#1), runtime hardening (#2), revisioned saves (#7), bounded Cargo builds (#8), isolated sessions (#9), Game Bridge (#10), official `.hmod` verification (#11), nested Project Explorer (#12), genuine official project creation (#13), and selected prepared resources (#14) are merged to `master`. [#16: Build .hmod](https://github.com/pneqnp-iswr/horizon-ide/pull/16) is under review and remains unavailable in releases until merged and tested. These changes do not prove real game loading or an embedded playable viewport.
 
@@ -39,6 +39,10 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --no-default-features
 ```
 
 `npm run dev` opens the Vite frontend, but **native file/game/build IPC only works in the desktop app**. Opening or browsing an untrusted source tree does not authorize Cargo builds. The **Run Build** confirmation warns that project build scripts and procedural macros can execute with your OS user's privileges. Do not build untrusted projects.
+
+## Local AI in the Windows desktop app
+
+Use **Local AI Coding Assistant** in the sidebar, select LM Studio or Ollama, and choose **Discover local models**. The IDE connects only to the specified local model server and sends the editor document only when you explicitly opt in. Responses are proposed text, not automatically applied changes. See [Local AI desktop guide](docs/LOCAL_AI_DESKTOP.md).
 
 ## Planned live-edit loop
 
