@@ -199,7 +199,7 @@ function App() {
     if (!gamePath || !controlPath || !checkerPath || !packagePath || !targetItemId || !workspaceRoot || smokeBusy) return;
     if (!window.confirm(
       'Launch your trusted Horizon client and horizon-ctl into a NEW disposable test world? ' +
-      'The selected .hmod is native content that will be loaded with user privileges. ' +
+      'The trusted game and checker are native executables running with your OS user privileges; the .hmod must be data-only. ' +
       'This test attempts give/inventory commands, then quit. No personal saves are deliberately used. ' +
       'The official cargo-horizon-mod checker must validate package SHA, mod ID, API and namespace. ' +
       'Only an inventory observation is verified; individual item membership and gameplay are not.',
