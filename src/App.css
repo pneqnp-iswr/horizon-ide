@@ -58,6 +58,11 @@ button:disabled { opacity: .6; cursor: default; }
 .panel { background: var(--bg); padding: 10px; border-bottom: 1px solid var(--border); display: grid; gap: 8px; min-width: 0; }
 .panel header { display: flex; align-items: center; justify-content: space-between; }
 .game-panel { overflow: auto; align-content: start; grid-auto-rows: max-content; }
+.game-window-diagnostic { border: 1px solid var(--border); border-radius: 6px; padding: 10px; display: grid; gap: 7px; }
+.game-window-diagnostic .button-row { justify-content: space-between; align-items: center; }
+.game-window-diagnostic strong { font-size: 12px; }
+.game-window-diagnostic button { padding: 5px 8px; font-size: 11px; }
+.game-window-diagnostic p { font-size: 11px; line-height: 1.4; color: var(--muted); margin: 0; overflow-wrap: anywhere; }
 .smoke-tools { border: 1px solid var(--border); padding: 10px; border-radius: 6px; }
 .smoke-tools summary { cursor: pointer; font-size: 12px; font-weight: 650; }
 .smoke-tools label { display: grid; gap: 5px; margin-top: 9px; font-size: 12px; }
