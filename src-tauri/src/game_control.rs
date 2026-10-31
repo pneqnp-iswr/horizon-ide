@@ -206,7 +206,7 @@ pub fn smoke(ctl: &Path, game: &Path, package: &Path, item: &str) -> Result<Item
     // The launch command starts a separate game process. If it refuses, no
     // ownership is established and we remove only the newly created folder.
     let launched = run_bounded(ctl, &[vec!["--socket".into(), socket.display().to_string()], launch].concat(), Duration::from_secs(180))
-        .and_then(|(status, stdout)| parse_reply(status, &stdout));
+        .and_then(|(status, stdout)| parse_reply(status.success(), &stdout));
     let launched = match launched {
         Ok(reply) => reply,
         Err(error) => {
