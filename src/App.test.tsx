@@ -7,6 +7,12 @@ vi.mock('@monaco-editor/react', () => ({
   default: ({ value, onChange }: { value: string; onChange: (text: string) => void }) => (
     <textarea aria-label="Monaco mock document" value={value} onChange={(event) => onChange(event.target.value)} />
   ),
+  DiffEditor: ({ original, modified }: { original: string; modified: string }) => (
+    <section aria-label="Monaco AI diff mock">
+      <pre data-testid="diff-original">{original}</pre>
+      <pre data-testid="diff-modified">{modified}</pre>
+    </section>
+  ),
 }));
 
 vi.mock('@xterm/xterm', () => ({
@@ -147,6 +153,69 @@ describe('App', () => {
     });
     expect((screen.getByPlaceholderText('Your local model identifier') as HTMLInputElement).value)
       .toBe('small-model');
+  });
+
+  it('shows a real Monaco diff and applies only to the editor buffer after approval', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(listDirectory).mockResolvedValueOnce([{ path: 'C:/dev/mod/behavior.rs', name: 'behavior.rs', is_dir: false }]);
+    vi.mocked(readTextFile).mockResolvedValueOnce({
+      contents: 'fn before() {}', revision: 'a'.repeat(64),
+    });
+    vi.mocked(askLocalAi).mockResolvedValueOnce({
+      provider: 'lmstudio', model: 'local-model',
+      content: JSON.stringify({ path: 'C:/dev/mod/behavior.rs', newContent: 'fn after() {}' }),
+      localEndpoint: 'http://127.0.0.1:1234/v1/chat/completions',
+      documentIncluded: true, proposedChangesApplied: false, commandsExecuted: false,
+    });
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/dev/horizon-mod'), { target: { value: 'C:/dev/mod' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Load Files' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Open file behavior.rs' }));
+    await waitFor(() => expect((screen.getByRole('textbox', { name: 'Monaco mock document' }) as HTMLTextAreaElement).value).toBe('fn before() {}'));
+    fireEvent.change(screen.getByPlaceholderText('Your local model identifier'), { target: { value: 'local-model' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Include current editor contents in prompt' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Propose file edit (review diff)' }));
+    expect(await screen.findByRole('region', { name: 'Monaco AI diff mock' })).toBeTruthy();
+    expect(screen.getByTestId('diff-original').textContent).toBe('fn before() {}');
+    expect(screen.getByTestId('diff-modified').textContent).toBe('fn after() {}');
+    expect(vi.mocked(saveTextFile)).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Apply to editor' }));
+    expect((screen.getByRole('textbox', { name: 'Monaco mock document' }) as HTMLTextAreaElement).value).toBe('fn after() {}');
+    expect(vi.mocked(saveTextFile)).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo AI buffer edit' }));
+    expect((screen.getByRole('textbox', { name: 'Monaco mock document' }) as HTMLTextAreaElement).value).toBe('fn before() {}');
+  });
+
+  it('rejects a stale edit when source is changed while model is generating', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(listDirectory).mockResolvedValueOnce([{ path: 'C:/dev/mod/behavior.rs', name: 'behavior.rs', is_dir: false }]);
+    vi.mocked(readTextFile).mockResolvedValueOnce({ contents: 'old', revision: 'a'.repeat(64) });
+    let resolveAi!: (value: Awaited<ReturnType<typeof askLocalAi>>) => void;
+    vi.mocked(askLocalAi).mockImplementationOnce(() => new Promise((resolve) => { resolveAi = resolve; }));
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/dev/horizon-mod'), { target: { value: 'C:/dev/mod' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Load Files' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Open file behavior.rs' }));
+    await waitFor(() => expect((screen.getByRole('textbox', { name: 'Monaco mock document' }) as HTMLTextAreaElement).value).toBe('old'));
+    fireEvent.change(screen.getByPlaceholderText('Your local model identifier'), { target: { value: 'local-model' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Include current editor contents in prompt' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Propose file edit (review diff)' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Monaco mock document' }), { target: { value: 'user has edited since request' } });
+    resolveAi({
+      provider: 'lmstudio', model: 'local-model',
+      content: JSON.stringify({ path: 'C:/dev/mod/behavior.rs', newContent: 'AI stale replacement' }),
+      localEndpoint: 'http://127.0.0.1:1234/v1/chat/completions',
+      documentIncluded: true, proposedChangesApplied: false, commandsExecuted: false,
+    });
+    expect(await screen.findByText(/Editor changed while AI was generating/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Apply to editor' })).toBeNull();
+    expect((screen.getByRole('textbox', { name: 'Monaco mock document' }) as HTMLTextAreaElement).value).toBe('user has edited since request');
+  });
+
+  it('refuses to propose a code edit without explicit source-context opt-in', () => {
+    render(<App />);
+    expect(screen.getByRole('button', { name: 'Propose file edit (review diff)' }).hasAttribute('disabled')).toBe(true);
+    expect(vi.mocked(askLocalAi)).not.toHaveBeenCalled();
   });
 
   it('does not send a local AI request without explicit user consent', () => {
