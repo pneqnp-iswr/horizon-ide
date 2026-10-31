@@ -59,7 +59,7 @@ describe('ProjectExplorer', () => {
     const openFile = vi.fn();
     render(<ProjectExplorer entries={entries} selectedPath="/project/horizon-mod.toml" onOpenFile={openFile} />);
     const selected = screen.getByRole('treeitem', { selected: true });
-    expect(selected).toHaveTextContent('horizon-mod.toml');
+    expect(selected.textContent).toContain('horizon-mod.toml');
     fireEvent.click(screen.getByRole('button', { name: 'Open file horizon-mod.toml' }));
     expect(openFile).toHaveBeenCalledWith('/project/horizon-mod.toml');
   });
