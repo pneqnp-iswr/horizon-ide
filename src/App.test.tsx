@@ -47,6 +47,17 @@ vi.mock('./services/tauri/client', () => ({
     level: 'inventory-observed',
     itemId: 'ruby:ruby',
     packageSha256: 'a'.repeat(64),
+    staticAttestation: {
+      checker: 'cargo-horizon-mod',
+      checkerReportKind: 'mod',
+      modId: 'ruby',
+      version: '0.1.0',
+      contentApi: '0.2',
+      sha256: 'a'.repeat(64),
+      officialStaticCheckPassed: true,
+      targetNamespaceMatches: true,
+      targetMemberVerified: false,
+    },
     packageItemOriginVerified: false,
     gameVersion: 'test',
     launchAccepted: true,
@@ -100,6 +111,9 @@ describe('App', () => {
     fireEvent.change(screen.getByPlaceholderText('C:/dev/horizon-mod'), { target: { value: 'C:/dev/mod' } });
     fireEvent.change(screen.getByPlaceholderText('C:/Horizon/horizon-client.exe'), { target: { value: 'C:/Horizon/horizon-client.exe' } });
     fireEvent.change(screen.getByPlaceholderText('C:/Horizon/horizon-ctl.exe'), { target: { value: 'C:/Horizon/horizon-ctl.exe' } });
+    fireEvent.change(screen.getByPlaceholderText('C:/Users/dev/.cargo/bin/cargo-horizon-mod.exe'), {
+      target: { value: 'C:/Users/dev/.cargo/bin/cargo-horizon-mod.exe' },
+    });
     fireEvent.change(screen.getByPlaceholderText('C:/dev/mod/target/mod.hmod'), { target: { value: 'C:/dev/mod/target/mod.hmod' } });
     fireEvent.change(screen.getByPlaceholderText('ruby:ruby'), { target: { value: 'ruby:ruby' } });
     fireEvent.click(screen.getByText('Test item in disposable world'));
@@ -112,6 +126,9 @@ describe('App', () => {
     fireEvent.change(screen.getByPlaceholderText('C:/dev/horizon-mod'), { target: { value: 'C:/dev/mod' } });
     fireEvent.change(screen.getByPlaceholderText('C:/Horizon/horizon-client.exe'), { target: { value: 'C:/Horizon/horizon-client.exe' } });
     fireEvent.change(screen.getByPlaceholderText('C:/Horizon/horizon-ctl.exe'), { target: { value: 'C:/Horizon/horizon-ctl.exe' } });
+    fireEvent.change(screen.getByPlaceholderText('C:/Users/dev/.cargo/bin/cargo-horizon-mod.exe'), {
+      target: { value: 'C:/Users/dev/.cargo/bin/cargo-horizon-mod.exe' },
+    });
     fireEvent.change(screen.getByPlaceholderText('C:/dev/mod/target/mod.hmod'), { target: { value: 'C:/dev/mod/target/mod.hmod' } });
     fireEvent.change(screen.getByPlaceholderText('ruby:ruby'), { target: { value: 'ruby:ruby' } });
     fireEvent.click(screen.getByText('Test item in disposable world'));
@@ -119,6 +136,7 @@ describe('App', () => {
     expect(vi.mocked(runGameItemSmoke)).toHaveBeenCalledWith(
       'C:/Horizon/horizon-ctl.exe',
       'C:/Horizon/horizon-client.exe',
+      'C:/Users/dev/.cargo/bin/cargo-horizon-mod.exe',
       'C:/dev/mod/target/mod.hmod',
       'ruby:ruby', true,
     );
