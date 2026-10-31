@@ -111,6 +111,48 @@ fn parse_http_response(bytes: &[u8]) -> Result<Value, String> {
     serde_json::from_slice(&decoded).map_err(|_| "local model returned malformed JSON".into())
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalAiModels {
+    pub provider: String,
+    pub models: Vec<String>,
+}
+
+pub fn list_models(provider: &str) -> Result<LocalAiModels, String> {
+    let port = port_for(provider)?;
+    list_models_on_port(provider, port)
+}
+
+fn list_models_on_port(provider: &str, port: u16) -> Result<LocalAiModels, String> {
+    let destination = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port));
+    let mut socket = TcpStream::connect_timeout(&destination, Duration::from_secs(3))
+        .map_err(|_| format!("cannot connect to {provider} on 127.0.0.1:{port}; start its local API server"))?;
+    socket.set_read_timeout(Some(Duration::from_secs(10))).map_err(|e| e.to_string())?;
+    socket.set_write_timeout(Some(Duration::from_secs(10))).map_err(|e| e.to_string())?;
+    socket.write_all(format!(
+        "GET /v1/models HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAccept: application/json\r\nConnection: close\r\n\r\n"
+    ).as_bytes()).map_err(|e| format!("model discovery request failed: {e}"))?;
+    let mut raw = Vec::new();
+    socket.take((MAX_REPLY + 1) as u64).read_to_end(&mut raw)
+        .map_err(|e| format!("model discovery read failed: {e}"))?;
+    if raw.len() > MAX_REPLY { return Err("model list response exceeded 512 KiB".into()); }
+    let json = parse_http_response(&raw)?;
+    let rows = json.get("data").and_then(Value::as_array)
+        .ok_or("local server response has no OpenAI-compatible data array")?;
+    let mut models = Vec::new();
+    for record in rows.iter().take(128) {
+        if let Some(id) = record.get("id").and_then(Value::as_str)
+            .filter(|model| valid_model(model)) {
+            if !models.iter().any(|known| known == id) {
+                models.push(id.to_owned());
+            }
+        }
+        if models.len() >= 64 { break; }
+    }
+    if models.is_empty() { return Err("no compatible models are currently exposed by the local server".into()); }
+    Ok(LocalAiModels { provider: provider.to_owned(), models })
+}
+
 fn extract_content(value: &Value) -> Result<String, String> {
     let text = value.pointer("/choices/0/message/content")
         .and_then(Value::as_str)
@@ -266,6 +308,39 @@ mod tests {
         assert!(!answer.proposed_changes_applied);
         assert!(!answer.commands_executed);
         assert!(answer.local_endpoint.starts_with("http://127.0.0.1:"));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn rejects_malformed_model_registry_and_validates_known_model_ids() {
+        let invalid = json!({"data":[{"id":"model with spaces"},{"id":"\r\n"}]});
+        assert!(invalid["data"].as_array().unwrap().iter()
+            .all(|entry| !entry["id"].as_str().is_some_and(valid_model)));
+        let valid = json!({"data":[{"id":"qwen3.8:27b"},{"id":"huihui-ai/Qwen3-27B"}]});
+        assert!(valid["data"].as_array().unwrap().iter()
+            .all(|entry| entry["id"].as_str().is_some_and(valid_model)));
+    }
+    #[test]
+    fn reads_real_loopback_model_discovery_json() {
+        use std::net::TcpListener;
+        use std::thread;
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut peer, _) = listener.accept().unwrap();
+            peer.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+            let mut bytes = [0; 1024];
+            let n = peer.read(&mut bytes).unwrap();
+            assert!(std::str::from_utf8(&bytes[..n]).unwrap().starts_with("GET /v1/models HTTP/1.1"));
+            let body = br#"{"data":[{"id":"qwen3.8:27b"},{"id":"qwen3.8:27b"},{"id":"../ invalid"}]}"#;
+            peer.write_all(format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            ).as_bytes()).unwrap();
+            peer.write_all(body).unwrap();
+        });
+        let result = list_models_on_port("lmstudio", port).unwrap();
+        assert_eq!(result.models, vec!["qwen3.8:27b"]);
         server.join().unwrap();
     }
 
