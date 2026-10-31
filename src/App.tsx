@@ -1,0 +1,244 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
+import Editor from '@monaco-editor/react';
+import { FitAddon } from '@xterm/addon-fit';
+import { Terminal } from '@xterm/xterm';
+import '@xterm/xterm/css/xterm.css';
+import './App.css';
+import { MockAIProvider } from './services/ai/provider';
+import { getGameStatus, launchGame, listDirectory, readTextFile, runBuild, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
+import { useWorkspaceStore } from './store/useWorkspaceStore';
+import type { BuildDiagnostic, FileEntry, GameStatus } from './types/app';
+
+const mockProvider = new MockAIProvider();
+
+function App() {
+  const terminalRef = useRef<HTMLDivElement | null>(null);
+  const terminalInstanceRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const [files, setFiles] = useState<FileEntry[]>([]);
+  const [selectedFile, setSelectedFile] = useState('');
+  const [fileContents, setFileContents] = useState('');
+  const [status, setStatus] = useState<GameStatus>('disconnected');
+  const [gamePath, setGamePath] = useState('');
+  const [aiPrompt, setAiPrompt] = useState('Create a new mob with custom AI behavior');
+  const [aiResponse, setAiResponse] = useState('');
+  const [diagnostics, setDiagnostics] = useState<BuildDiagnostic[]>([]);
+  const [buildOutput, setBuildOutput] = useState('Build output will appear here.');
+  const [leftWidth, setLeftWidth] = useState(45);
+  const [bottomHeight, setBottomHeight] = useState(35);
+
+  const { theme, workspaceRoot, setTheme, setWorkspaceRoot: persistWorkspaceRoot } = useWorkspaceStore();
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
+
+  useEffect(() => {
+    const term = new Terminal({ convertEol: true, theme: { background: '#10131a' } });
+    const fit = new FitAddon();
+    term.loadAddon(fit);
+    if (terminalRef.current) {
+      term.open(terminalRef.current);
+      fit.fit();
+      term.writeln('Horizon IDE console ready.');
+    }
+    terminalInstanceRef.current = term;
+    fitAddonRef.current = fit;
+    return () => term.dispose();
+  }, []);
+
+  useEffect(() => {
+    const onResize = () => fitAddonRef.current?.fit();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  useEffect(() => {
+    void getGameStatus().then(setStatus).catch(() => setStatus('disconnected'));
+  }, []);
+
+  const gameLabel = useMemo(() => {
+    if (status === 'running') return 'Running';
+    if (status === 'launching') return 'Launching';
+    if (status === 'error') return 'Error';
+    return 'Disconnected';
+  }, [status]);
+
+  async function refreshFiles() {
+    if (!workspaceRoot) return;
+    await setWorkspaceRoot(workspaceRoot);
+    const entries = await listDirectory(workspaceRoot);
+    setFiles(entries);
+  }
+
+  async function openFile(path: string) {
+    const data = await readTextFile(path);
+    setSelectedFile(path);
+    setFileContents(data);
+  }
+
+  async function saveCurrentFile() {
+    if (!selectedFile) return;
+    await saveTextFile(selectedFile, fileContents);
+    terminalInstanceRef.current?.writeln(`Saved ${selectedFile}`);
+  }
+
+  async function onBuild() {
+    if (!workspaceRoot) return;
+    const result = await runBuild(workspaceRoot);
+    setBuildOutput(result.output);
+    setDiagnostics(result.diagnostics);
+    terminalInstanceRef.current?.writeln(result.success ? 'Build succeeded.' : 'Build failed.');
+  }
+
+  async function onLaunchGame() {
+    setStatus('launching');
+    try {
+      const next = await launchGame(gamePath, []);
+      setStatus(next);
+      terminalInstanceRef.current?.writeln(`Game status: ${next}`);
+    } catch (error) {
+      setStatus('error');
+      terminalInstanceRef.current?.writeln(`Launch failed: ${String(error)}`);
+    }
+  }
+
+  async function onAIRequest() {
+    const response = await mockProvider.generate({ prompt: aiPrompt });
+    setAiResponse(response.content);
+  }
+
+  function attachHorizontalResize(event: ReactMouseEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const startX = event.clientX;
+    const start = leftWidth;
+    const onMove = (moveEvent: MouseEvent) => {
+      const deltaPercent = ((moveEvent.clientX - startX) / window.innerWidth) * 100;
+      setLeftWidth(Math.max(20, Math.min(80, start + deltaPercent)));
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  function attachVerticalResize(event: ReactMouseEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const startY = event.clientY;
+    const start = bottomHeight;
+    const onMove = (moveEvent: MouseEvent) => {
+      const deltaPercent = ((startY - moveEvent.clientY) / window.innerHeight) * 100;
+      setBottomHeight(Math.max(20, Math.min(50, start + deltaPercent)));
+      fitAddonRef.current?.fit();
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <h1>Horizon IDE</h1>
+        <label>
+          Workspace Root
+          <input
+            value={workspaceRoot}
+            onChange={(event) => persistWorkspaceRoot(event.target.value)}
+            placeholder="C:/dev/horizon-mod"
+          />
+        </label>
+        <button onClick={() => void refreshFiles()}>Load Files</button>
+        <label>
+          Theme
+          <select value={theme} onChange={(event) => setTheme(event.target.value as 'dark' | 'light')}>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </label>
+        <h2>Project Explorer</h2>
+        <ul className="file-list">
+          {files.map((file) => (
+            <li key={file.path}>
+              <button disabled={file.is_dir} onClick={() => void openFile(file.path)}>
+                {file.is_dir ? '📁' : '📄'} {file.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+        <h2>AI Assistant ({mockProvider.label})</h2>
+        <textarea value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} rows={4} />
+        <button onClick={() => void onAIRequest()}>Run AI Prompt</button>
+        <pre className="ai-output">{aiResponse || 'Mock responses are clearly marked and provider is extensible.'}</pre>
+      </aside>
+
+      <main className="workspace" style={{ gridTemplateRows: `1fr 6px ${bottomHeight}%` }}>
+        <section className="top-panels">
+          <article className="panel" style={{ width: `${leftWidth}%` }}>
+            <header>
+              <h2>Horizon Game</h2>
+              <span data-status={status}>{gameLabel}</span>
+            </header>
+            <label>
+              Executable Path
+              <input value={gamePath} onChange={(event) => setGamePath(event.target.value)} placeholder="C:/Horizon/horizon.exe" />
+            </label>
+            <div className="button-row">
+              <button onClick={() => void onLaunchGame()}>Launch</button>
+              <button onClick={() => void stopGame()}>Stop</button>
+            </div>
+            <p>
+              Supported today: external process launch and status tracking. Native embedded viewport and runtime bridge are planned.
+            </p>
+          </article>
+          <div className="splitter vertical" onMouseDown={attachHorizontalResize} />
+          <article className="panel editor-panel" style={{ width: `${100 - leftWidth}%` }}>
+            <header>
+              <h2>Code Editor</h2>
+              <button onClick={() => void saveCurrentFile()} disabled={!selectedFile}>Save</button>
+            </header>
+            <p className="current-file">{selectedFile || 'Open a file from explorer'}</p>
+            <Editor
+              height="100%"
+              theme="vs-dark"
+              value={fileContents}
+              language="rust"
+              onChange={(value) => setFileContents(value ?? '')}
+              options={{ minimap: { enabled: false }, fontSize: 13 }}
+            />
+          </article>
+        </section>
+        <div className="splitter horizontal" onMouseDown={attachVerticalResize} />
+        <section className="bottom-panel">
+          <header>
+            <h2>Build, Diagnostics, Console</h2>
+            <button onClick={() => void onBuild()}>Run Build</button>
+          </header>
+          <div className="bottom-grid">
+            <pre className="build-output">{buildOutput}</pre>
+            <div className="diagnostics">
+              {diagnostics.length === 0 ? (
+                <p>No diagnostics yet.</p>
+              ) : (
+                diagnostics.map((diag, index) => (
+                  <p key={`${diag.message}-${index}`} data-level={diag.level}>
+                    [{diag.level}] {diag.file ?? 'workspace'}:{diag.line ?? 0} {diag.message}
+                  </p>
+                ))
+              )}
+            </div>
+            <div ref={terminalRef} className="terminal" />
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
+export default App;
