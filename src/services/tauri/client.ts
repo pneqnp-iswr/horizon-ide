@@ -44,11 +44,12 @@ export async function cancelBuild(): Promise<boolean> {
 export async function runGameItemSmoke(
   ctlPath: string,
   gamePath: string,
+  checkerPath: string,
   packagePath: string,
   itemId: string,
   approved: boolean,
 ): Promise<GameItemSmokeReport> {
   return invoke<GameItemSmokeReport>('run_game_item_smoke', {
-    ctlPath, gamePath, packagePath, itemId, approved,
+    ctlPath, gamePath, checkerPath, packagePath, itemId, approved,
   });
 }
