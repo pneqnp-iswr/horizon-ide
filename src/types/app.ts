@@ -18,3 +18,12 @@ export interface BuildResult {
   output: string;
   diagnostics: BuildDiagnostic[];
 }
+
+export interface HorizonInstallationReport {
+  launchApi: string;
+  horizon: string | null;
+  minecraft: string | null;
+  compatibleForPreview: boolean;
+  gameLoadVerified: false;
+  embeddedViewportVerified: false;
+}

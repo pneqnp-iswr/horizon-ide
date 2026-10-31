@@ -6,7 +6,7 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import './App.css';
 import { MockAIProvider } from './services/ai/provider';
-import { getGameStatus, launchGame, listDirectory, readTextFile, runBuild, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
+import { getGameStatus, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
 import { useWorkspaceStore } from './store/useWorkspaceStore';
 import type { BuildDiagnostic, FileEntry, GameStatus } from './types/app';
 
@@ -21,6 +21,8 @@ function App() {
   const [fileContents, setFileContents] = useState('');
   const [status, setStatus] = useState<GameStatus>('disconnected');
   const [gamePath, setGamePath] = useState('');
+  const [gameProbe, setGameProbe] = useState('Select your installed horizon-client and check its Launch API.');
+  const [probing, setProbing] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('Create a new mob with custom AI behavior');
   const [aiResponse, setAiResponse] = useState('');
   const [diagnostics, setDiagnostics] = useState<BuildDiagnostic[]>([]);
@@ -55,7 +57,15 @@ function App() {
   }, []);
 
   useEffect(() => {
-    void getGameStatus().then(setStatus).catch(() => setStatus('disconnected'));
+    let active = true;
+    const check = () => {
+      void getGameStatus()
+        .then((next) => { if (active) setStatus(next); })
+        .catch(() => { if (active) setStatus('error'); });
+    };
+    check();
+    const poll = window.setInterval(check, 1500);
+    return () => { active = false; window.clearInterval(poll); };
   }, []);
 
   const gameLabel = useMemo(() => {
@@ -92,6 +102,20 @@ function App() {
     terminalInstanceRef.current?.writeln(result.success ? 'Build succeeded.' : 'Build failed.');
   }
 
+  async function onInspectHorizon() {
+    if (!gamePath.trim()) return;
+    setProbing(true);
+    setGameProbe('Checking local Horizon Launch API…');
+    try {
+      const report = await inspectHorizonClient(gamePath);
+      setGameProbe(`Launch API ${report.launchApi} · ${report.horizon ?? 'Horizon'} · compatible for preview only. Game load and embedding have NOT been verified.`);
+    } catch (error) {
+      setGameProbe(`Incompatible or unavailable installation: ${String(error)}`);
+    } finally {
+      setProbing(false);
+    }
+  }
+
   async function onLaunchGame() {
     setStatus('launching');
     try {
@@ -101,6 +125,17 @@ function App() {
     } catch (error) {
       setStatus('error');
       terminalInstanceRef.current?.writeln(`Launch failed: ${String(error)}`);
+    }
+  }
+
+  async function onStopGame() {
+    try {
+      await stopGame();
+      setStatus('disconnected');
+      terminalInstanceRef.current?.writeln('Game process stopped.');
+    } catch (error) {
+      setStatus('error');
+      terminalInstanceRef.current?.writeln(`Stop failed: ${String(error)}`);
     }
   }
 
@@ -187,14 +222,18 @@ function App() {
             </header>
             <label>
               Executable Path
-              <input value={gamePath} onChange={(event) => setGamePath(event.target.value)} placeholder="C:/Horizon/horizon.exe" />
+              <input value={gamePath} onChange={(event) => { setGamePath(event.target.value); setGameProbe('Installation not checked.'); }} placeholder="C:/Horizon/horizon-client.exe" />
             </label>
             <div className="button-row">
-              <button onClick={() => void onLaunchGame()}>Launch</button>
-              <button onClick={() => void stopGame()}>Stop</button>
+              <button onClick={() => void onInspectHorizon()} disabled={probing || !gamePath.trim()}>
+                {probing ? 'Checking…' : 'Check Horizon'}
+              </button>
+              <button onClick={() => void onLaunchGame()} disabled={status === 'running' || status === 'launching' || !gamePath.trim()}>Launch</button>
+              <button onClick={() => void onStopGame()} disabled={status === 'disconnected'}>Stop</button>
             </div>
+            <p role="status">{gameProbe}</p>
             <p>
-              Supported today: external process launch and status tracking. Native embedded viewport and runtime bridge are planned.
+              Supported today: one explicitly selected horizon-client process, without custom launch flags. “Running” means the OS process is alive, not that a world or mod has loaded. Native game embedding and in-game testing remain unverified.
             </p>
           </article>
           <div className="splitter vertical" onMouseDown={attachHorizontalResize} />

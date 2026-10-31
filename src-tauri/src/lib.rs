@@ -19,6 +19,12 @@ enum AppError {
     MissingPath(String),
     #[error("invalid launch request")]
     InvalidLaunchRequest,
+    #[error("Horizon is already running in this IDE session")]
+    GameAlreadyRunning,
+    #[error("the selected Horizon Launch API is unsupported: {0}")]
+    UnsupportedLaunchApi(String),
+    #[error("Horizon Launch API probe timed out")]
+    LaunchProbeTimeout,
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -37,6 +43,20 @@ struct AppState {
     workspace_root: Mutex<Option<PathBuf>>,
     game_status: Mutex<GameStatus>,
     game_process: Mutex<Option<Child>>,
+}
+
+// The IDE owns at most one external game process. Dropping its runtime
+// must not silently abandon that process, even when the UI closes without
+// pressing Stop. This is best-effort on ordinary process shutdown.
+impl Drop for AppState {
+    fn drop(&mut self) {
+        if let Ok(process) = self.game_process.get_mut() {
+            if let Some(child) = process.as_mut() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,28 +163,195 @@ fn write_text_file(path: String, contents: String, state: State<AppState>) -> Re
     Ok(())
 }
 
-#[cfg(feature = "desktop")]
-#[tauri::command]
-fn launch_game(request: LaunchRequest, state: State<AppState>) -> Result<GameStatus, AppError> {
-    if request.executable_path.trim().is_empty() {
-        *state.game_status.lock().expect("status lock poisoned") = GameStatus::Error;
+/// Only an explicitly selected local Horizon client can be started. The first
+/// vertical slice deliberately has no arbitrary command flags or generic
+/// executable launcher; later flags must be negotiated against Launch API.
+fn validated_horizon_executable(request: &LaunchRequest) -> Result<PathBuf, AppError> {
+    if !request.args.is_empty() {
         return Err(AppError::InvalidLaunchRequest);
     }
+    let selected = Path::new(request.executable_path.trim());
+    if !selected.is_absolute() {
+        return Err(AppError::InvalidLaunchRequest);
+    }
+    let resolved = selected
+        .canonicalize()
+        .map_err(|_| AppError::MissingPath(selected.display().to_string()))?;
+    if !resolved.is_file() {
+        return Err(AppError::InvalidLaunchRequest);
+    }
+    let name = resolved.file_name().and_then(|name| name.to_str());
+    if !name.is_some_and(|name| {
+        name.eq_ignore_ascii_case("horizon-client") || name.eq_ignore_ascii_case("horizon-client.exe")
+    }) {
+        return Err(AppError::InvalidLaunchRequest);
+    }
+    Ok(resolved)
+}
 
+/// Version-negotiated launch protocol, not proof that the renderer or a mod runs.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HorizonInstallationReport {
+    launch_api: String,
+    horizon: Option<String>,
+    minecraft: Option<String>,
+    compatible_for_preview: bool,
+    game_load_verified: bool,
+    embedded_viewport_verified: bool,
+}
+
+fn parse_horizon_launch_api(bytes: &[u8]) -> Result<HorizonInstallationReport, AppError> {
+    if bytes.len() > 65_536 {
+        return Err(AppError::UnsupportedLaunchApi("response too large".into()));
+    }
+    let parsed: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|_| AppError::UnsupportedLaunchApi("invalid JSON".into()))?;
+    let object = parsed.as_object()
+        .ok_or_else(|| AppError::UnsupportedLaunchApi("expected object".into()))?;
+    let version = object.get("launch_api").and_then(|value| value.as_str())
+        .ok_or_else(|| AppError::UnsupportedLaunchApi("missing launch_api".into()))?;
+    let parts = version.split('.').map(str::parse::<u16>).collect::<Result<Vec<_>, _>>()
+        .map_err(|_| AppError::UnsupportedLaunchApi("malformed version".into()))?;
+    if parts.len() != 3 || parts[0] != 0 || (parts[1], parts[2]) < (1, 0) {
+        return Err(AppError::UnsupportedLaunchApi(version.into()));
+    }
+    let options = object.get("options").and_then(|value| value.as_array())
+        .ok_or_else(|| AppError::UnsupportedLaunchApi("options missing".into()))?;
+    for required in ["--game-dir", "--home"] {
+        if !options.iter().any(|value| value.get("name").and_then(|name| name.as_str()) == Some(required)) {
+            return Err(AppError::UnsupportedLaunchApi(format!("missing {required}")));
+        }
+    }
+    Ok(HorizonInstallationReport {
+        launch_api: version.to_string(),
+        horizon: object.get("horizon").and_then(|value| value.as_str()).map(str::to_string),
+        minecraft: object.get("minecraft").and_then(|value| value.as_str()).map(str::to_string),
+        compatible_for_preview: true,
+        game_load_verified: false,
+        embedded_viewport_verified: false,
+    })
+}
+
+/// Only a selected local horizon-client is executed with --launch-api.
+/// Bounded stdout and a deadline keep a malformed executable from blocking
+/// the IDE indefinitely. Do not confuse this with in-game verification.
+fn probe_horizon_installation(executable: &Path) -> Result<HorizonInstallationReport, AppError> {
+    use std::io::Read;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    let mut child = Command::new(executable)
+        .arg("--launch-api")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        AppError::UnsupportedLaunchApi("stdout unavailable".into())
+    })?;
+    let (sender, receiver) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let mut limited = stdout.take(65_537);
+        let mut bytes = Vec::new();
+        let read = limited.read_to_end(&mut bytes).map(|_| bytes);
+        let _ = sender.send(read);
+    });
+
+    let start = Instant::now();
+    let exit = loop {
+        if let Some(code) = child.try_wait()? {
+            break code;
+        }
+        if start.elapsed() >= Duration::from_secs(8) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(AppError::LaunchProbeTimeout);
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    };
+    if !exit.success() {
+        return Err(AppError::UnsupportedLaunchApi(format!("exited with {exit}")));
+    }
+    let bytes = receiver.recv_timeout(Duration::from_secs(1))
+        .map_err(|_| AppError::UnsupportedLaunchApi("response was not closed".into()))??;
+    parse_horizon_launch_api(&bytes)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+async fn inspect_horizon_client(executable_path: String) -> Result<HorizonInstallationReport, AppError> {
+    let executable = validated_horizon_executable(&LaunchRequest {
+        executable_path,
+        args: vec![],
+    })?;
+    // Never run a potentially slow native probe on the desktop event loop.
+    tauri::async_runtime::spawn_blocking(move || probe_horizon_installation(&executable))
+        .await
+        .map_err(|error| AppError::UnsupportedLaunchApi(format!("probe task failed: {error}")))?
+}
+
+/// Reaps a completed child before returning the public process status.
+/// Running means only that the OS process exists, not that a game world loaded.
+fn refresh_game_process(state: &AppState) -> GameStatus {
+    let mut process = state.game_process.lock().expect("process lock poisoned");
+    let mut status = state.game_status.lock().expect("status lock poisoned");
+    if let Some(child) = process.as_mut() {
+        match child.try_wait() {
+            Ok(Some(exit)) => {
+                *process = None;
+                *status = if exit.success() { GameStatus::Disconnected } else { GameStatus::Error };
+            }
+            Ok(None) => *status = GameStatus::Running,
+            Err(_) => *status = GameStatus::Error,
+        }
+    }
+    status.clone()
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+async fn launch_game(request: LaunchRequest, state: State<'_, AppState>) -> Result<GameStatus, AppError> {
+    let executable = validated_horizon_executable(&request)?;
+    let probe_path = executable.clone();
+    tauri::async_runtime::spawn_blocking(move || probe_horizon_installation(&probe_path))
+        .await
+        .map_err(|error| AppError::UnsupportedLaunchApi(format!("probe task failed: {error}")))??;
+    let mut process = state.game_process.lock().expect("process lock poisoned");
+
+    if let Some(previous) = process.as_mut() {
+        if previous.try_wait()?.is_none() {
+            return Err(AppError::GameAlreadyRunning);
+        }
+        // A prior game exited: reap it before replacing the handle.
+        *process = None;
+    }
     *state.game_status.lock().expect("status lock poisoned") = GameStatus::Launching;
 
-    let mut command = Command::new(&request.executable_path);
-    command.args(request.args.iter()).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped());
-
-    match command.spawn() {
-        Ok(child) => {
-            *state.game_process.lock().expect("process lock poisoned") = Some(child);
-            *state.game_status.lock().expect("status lock poisoned") = GameStatus::Running;
-            Ok(GameStatus::Running)
+    // Never pipe stderr without a reader: the child can deadlock when it
+    // fills the pipe. A bounded log collector will be a separate adapter.
+    let spawn = Command::new(executable)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    match spawn {
+        Ok(mut child) => {
+            match child.try_wait()? {
+                Some(_) => {
+                    *state.game_status.lock().expect("status lock poisoned") = GameStatus::Error;
+                    Ok(GameStatus::Error)
+                }
+                None => {
+                    *process = Some(child);
+                    *state.game_status.lock().expect("status lock poisoned") = GameStatus::Running;
+                    Ok(GameStatus::Running)
+                }
+            }
         }
-        Err(_) => {
+        Err(error) => {
             *state.game_status.lock().expect("status lock poisoned") = GameStatus::Error;
-            Ok(GameStatus::Error)
+            Err(AppError::Io(error))
         }
     }
 }
@@ -174,7 +361,11 @@ fn launch_game(request: LaunchRequest, state: State<AppState>) -> Result<GameSta
 fn stop_game(state: State<AppState>) -> Result<(), AppError> {
     let mut process = state.game_process.lock().expect("process lock poisoned");
     if let Some(child) = process.as_mut() {
-        let _ = child.kill();
+        if child.try_wait()?.is_none() {
+            child.kill()?;
+        }
+        // Reap before dropping the Child to avoid zombies on Unix.
+        child.wait()?;
     }
     *process = None;
     *state.game_status.lock().expect("status lock poisoned") = GameStatus::Disconnected;
@@ -184,7 +375,7 @@ fn stop_game(state: State<AppState>) -> Result<(), AppError> {
 #[cfg(feature = "desktop")]
 #[tauri::command]
 fn get_game_status(state: State<AppState>) -> GameStatus {
-    state.game_status.lock().expect("status lock poisoned").clone()
+    refresh_game_process(&state)
 }
 
 #[cfg(feature = "desktop")]
@@ -236,6 +427,7 @@ pub fn run() {
             list_directory,
             read_text_file,
             write_text_file,
+            inspect_horizon_client,
             launch_game,
             stop_game,
             get_game_status,
@@ -253,6 +445,74 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launch_api_probe_checks_required_options_without_claiming_gameplay() {
+        let good = br#"{"launch_api":"0.1.0","horizon":"Horizon test","minecraft":"26.3",
+            "options":[{"name":"--game-dir"},{"name":"--home"}]}"#;
+        let report = parse_horizon_launch_api(good).expect("valid response");
+        assert_eq!(report.launch_api, "0.1.0");
+        assert!(report.compatible_for_preview);
+        assert!(!report.game_load_verified);
+        assert!(!report.embedded_viewport_verified);
+    }
+
+    #[test]
+    fn launch_api_probe_rejects_wrong_version_missing_options_and_malformed_replies() {
+        for json in [
+            r#"{"launch_api":"1.0.0","options":[{"name":"--game-dir"},{"name":"--home"}]}"#,
+            r#"{"launch_api":"0.0.9","options":[{"name":"--game-dir"},{"name":"--home"}]}"#,
+            r#"{"launch_api":"0.1.0","options":[{"name":"--game-dir"}]}"#,
+            r#"{"launch_api":"0.1.0","options":null}"#,
+            r#"[]"#,
+            r#"not a JSON reply"#,
+        ] {
+            assert!(parse_horizon_launch_api(json.as_bytes()).is_err(), "{json}");
+        }
+    }
+
+    #[test]
+    fn game_launch_refuses_arbitrary_executables_and_flags() {
+        let request = LaunchRequest {
+            executable_path: "/not/horizon-client".to_string(),
+            args: vec!["--help".to_string()],
+        };
+        assert!(matches!(validated_horizon_executable(&request), Err(AppError::InvalidLaunchRequest)));
+        let request = LaunchRequest {
+            executable_path: "horizon-client".to_string(),
+            args: vec![],
+        };
+        assert!(matches!(validated_horizon_executable(&request), Err(AppError::InvalidLaunchRequest)));
+    }
+
+    #[test]
+    fn status_refresh_reaps_a_child_that_exits() {
+        let child = Command::new(std::env::current_exe().expect("test runner"))
+            .arg("--list")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn local test runner");
+        let state = AppState::default();
+        *state.game_process.lock().unwrap() = Some(child);
+        let mut result = GameStatus::Running;
+        for _ in 0..100 {
+            result = refresh_game_process(&state);
+            if !matches!(result, GameStatus::Running) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(matches!(result, GameStatus::Disconnected));
+        assert!(state.game_process.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn game_status_refresh_has_no_game_load_claim() {
+        let state = AppState::default();
+        assert!(matches!(refresh_game_process(&state), GameStatus::Disconnected));
+    }
 
     #[test]
     fn ensure_within_workspace_rejects_escape() {
