@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
-import { listDirectory, readTextFile, saveTextFile } from './services/tauri/client';
+import { cancelBuild, listDirectory, readTextFile, runBuild, saveTextFile } from './services/tauri/client';
 
 vi.mock('@monaco-editor/react', () => ({
   default: ({ value, onChange }: { value: string; onChange: (text: string) => void }) => (
@@ -37,13 +37,21 @@ vi.mock('./services/tauri/client', () => ({
   launchGame: vi.fn().mockResolvedValue('running'),
   listDirectory: vi.fn().mockResolvedValue([]),
   readTextFile: vi.fn().mockResolvedValue({ contents: '', revision: 'a'.repeat(64) }),
-  runBuild: vi.fn().mockResolvedValue({ success: true, output: 'ok', diagnostics: [] }),
+  runBuild: vi.fn().mockResolvedValue({
+    success: true, cancelled: false, timedOut: false, outputTruncated: false,
+    output: 'ok', diagnostics: [],
+  }),
+  cancelBuild: vi.fn().mockResolvedValue(true),
   saveTextFile: vi.fn().mockResolvedValue({ contents: '', revision: 'b'.repeat(64) }),
   setWorkspaceRoot: vi.fn().mockResolvedValue(undefined),
   stopGame: vi.fn().mockResolvedValue(undefined),
 }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  vi.clearAllMocks();
+});
 
 describe('App', () => {
   it('renders core workspace panels', () => {
@@ -61,6 +69,28 @@ describe('App', () => {
     fireEvent.click(screen.getByText('Check Horizon'));
     expect(await screen.findByText(/Game load and embedding have NOT been verified/)).toBeTruthy();
   });
+  it('never builds untrusted project code after consent is declined', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/dev/horizon-mod'), {
+      target: { value: '/tmp/user-project' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Run Build' }));
+    expect(vi.mocked(runBuild)).not.toHaveBeenCalled();
+    expect(vi.mocked(cancelBuild)).not.toHaveBeenCalled();
+  });
+
+  it('requests a user-approved bounded build and displays diagnostics', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/dev/horizon-mod'), {
+      target: { value: '/tmp/user-project' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Run Build' }));
+    expect(await screen.findByText('ok')).toBeTruthy();
+    expect(vi.mocked(runBuild)).toHaveBeenCalledWith('/tmp/user-project', true);
+  });
+
   it('keeps unsaved code on a stale revision instead of silently overwriting the disk', async () => {
     vi.mocked(listDirectory).mockResolvedValueOnce([{
       path: '/tmp/ide/main.rs', name: 'main.rs', is_dir: false,

@@ -33,6 +33,10 @@ export async function getGameStatus(): Promise<GameStatus> {
   return invoke<GameStatus>('get_game_status');
 }
 
-export async function runBuild(workspacePath: string): Promise<BuildResult> {
-  return invoke<BuildResult>('run_build', { workspacePath });
+export async function runBuild(workspacePath: string, approved: boolean): Promise<BuildResult> {
+  return invoke<BuildResult>('run_build', { workspacePath, approved });
+}
+
+export async function cancelBuild(): Promise<boolean> {
+  return invoke<boolean>('cancel_build');
 }

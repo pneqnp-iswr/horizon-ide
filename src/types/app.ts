@@ -15,6 +15,9 @@ export interface BuildDiagnostic {
 
 export interface BuildResult {
   success: boolean;
+  cancelled: boolean;
+  timedOut: boolean;
+  outputTruncated: boolean;
   output: string;
   diagnostics: BuildDiagnostic[];
 }

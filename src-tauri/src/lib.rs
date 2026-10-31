@@ -1,3 +1,4 @@
+mod build_runner;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -5,7 +6,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{atomic::{AtomicU64, Ordering}, Mutex},
+    sync::{atomic::{AtomicBool, AtomicU64, Ordering}, Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
@@ -26,6 +27,12 @@ enum AppError {
     UnsupportedDocument,
     #[error("invalid document revision")]
     InvalidRevision,
+    #[error("building project code requires explicit approval")]
+    BuildApprovalRequired,
+    #[error("a Cargo build is already in progress")]
+    BuildAlreadyRunning,
+    #[error("workspace has no Cargo.toml")]
+    NotCargoWorkspace,
     #[error("invalid launch request")]
     InvalidLaunchRequest,
     #[error("Horizon is already running in this IDE session")]
@@ -51,6 +58,9 @@ impl serde::Serialize for AppError {
 struct AppState {
     workspace_root: Mutex<Option<PathBuf>>,
     document_write_lock: Mutex<()>,
+    build_running: AtomicBool,
+    build_cancel: Arc<AtomicBool>,
+    build_process: Arc<Mutex<Option<Child>>>,
     game_status: Mutex<GameStatus>,
     game_process: Mutex<Option<Child>>,
 }
@@ -60,6 +70,14 @@ struct AppState {
 // pressing Stop. This is best-effort on ordinary process shutdown.
 impl Drop for AppState {
     fn drop(&mut self) {
+        self.build_cancel.store(true, Ordering::Release);
+        if let Ok(mut process) = self.build_process.lock() {
+            if let Some(child) = process.as_mut() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            *process = None;
+        }
         if let Ok(process) = self.game_process.get_mut() {
             if let Some(child) = process.as_mut() {
                 let _ = child.kill();
@@ -111,6 +129,9 @@ pub struct BuildDiagnostic {
 #[serde(rename_all = "camelCase")]
 pub struct BuildResult {
     success: bool,
+    cancelled: bool,
+    timed_out: bool,
+    output_truncated: bool,
     output: String,
     diagnostics: Vec<BuildDiagnostic>,
 }
@@ -492,43 +513,98 @@ fn get_game_status(state: State<AppState>) -> GameStatus {
     refresh_game_process(&state)
 }
 
+fn compiler_diagnostics(stdout: &str) -> Vec<BuildDiagnostic> {
+    stdout.lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|event| event.get("reason").and_then(|v| v.as_str()) == Some("compiler-message"))
+        .filter_map(|event| {
+            let message = event.get("message")?;
+            let level = message.get("level")?.as_str()?;
+            if !["error", "warning", "note", "help"].contains(&level) { return None; }
+            let text = message.get("message")?.as_str()?;
+            let span = message.get("spans")?.as_array()
+                .and_then(|spans| spans.iter().find(|s| s.get("is_primary").and_then(|v| v.as_bool()) == Some(true)));
+            Some(BuildDiagnostic {
+                level: if level == "error" { "error" } else if level == "warning" { "warning" } else { "info" }.into(),
+                message: text.chars().take(1000).collect(),
+                file: span.and_then(|s| s.get("file_name")).and_then(|v| v.as_str()).map(str::to_string),
+                line: span.and_then(|s| s.get("line_start")).and_then(|v| v.as_u64())
+                    .and_then(|n| u32::try_from(n).ok()),
+            })
+        })
+        .take(128)
+        .collect()
+}
+
 #[cfg(feature = "desktop")]
 #[tauri::command]
-fn run_build(workspace_path: String, state: State<AppState>) -> Result<BuildResult, AppError> {
-    let root = state.workspace_root.lock().expect("workspace root lock poisoned").clone().ok_or(AppError::MissingWorkspaceRoot)?;
+async fn run_build(
+    workspace_path: String,
+    approved: bool,
+    state: State<'_, AppState>,
+) -> Result<BuildResult, AppError> {
+    if !approved { return Err(AppError::BuildApprovalRequired); }
+    let root = state.workspace_root.lock().expect("workspace root lock poisoned")
+        .clone().ok_or(AppError::MissingWorkspaceRoot)?;
     let workspace = ensure_within_workspace(&root, Path::new(&workspace_path))?;
+    if !workspace.is_dir() || !workspace.join("Cargo.toml").is_file() {
+        return Err(AppError::NotCargoWorkspace);
+    }
+    if state.build_running.swap(true, Ordering::AcqRel) {
+        return Err(AppError::BuildAlreadyRunning);
+    }
+    state.build_cancel.store(false, Ordering::Release);
+    let cancel = state.build_cancel.clone();
+    let process = state.build_process.clone();
+    let task = tauri::async_runtime::spawn_blocking(move || {
+        build_runner::cargo_check(&workspace, cancel, process, build_runner::DEFAULT_TIMEOUT)
+    }).await;
+    state.build_running.store(false, Ordering::Release);
+    let captured = task.map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))??;
 
-    let output = Command::new("cargo")
-        .arg("check")
-        .current_dir(workspace)
-        .output()?;
-
-    let success = output.status.success();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = format!("{}{}", stdout, stderr);
-
-    let diagnostics = if success {
-        vec![BuildDiagnostic {
-            level: "info".into(),
-            message: "cargo check completed successfully".into(),
-            file: None,
-            line: None,
-        }]
-    } else {
-        vec![BuildDiagnostic {
-            level: "error".into(),
-            message: "Build failed. See output for details.".into(),
-            file: None,
-            line: None,
-        }]
-    };
-
+    let mut diagnostics = compiler_diagnostics(&captured.stdout);
+    if diagnostics.is_empty() {
+        diagnostics.push(BuildDiagnostic {
+            level: if captured.success { "info" } else { "error" }.into(),
+            message: if captured.cancelled {
+                "Cargo build was cancelled"
+            } else if captured.timed_out {
+                "Cargo build exceeded the 180-second limit"
+            } else if captured.success {
+                "cargo check completed successfully"
+            } else {
+                "Cargo check failed; see build output"
+            }.into(),
+            file: None, line: None,
+        });
+    }
+    let details = diagnostics.iter()
+        .map(|d| format!("{}: {}{}",
+            d.level,
+            d.message,
+            d.file.as_ref().map(|p| format!(" ({p}:{})", d.line.unwrap_or_default())).unwrap_or_default()
+        ))
+        .collect::<Vec<_>>().join("\n");
+    let mut output = format!("{details}\n\n{}", captured.stderr);
+    if captured.output_truncated {
+        output.push_str("\n[Output truncated to 512 KiB per stream.]");
+    }
     Ok(BuildResult {
-        success,
-        output: combined,
+        success: captured.success,
+        cancelled: captured.cancelled,
+        timed_out: captured.timed_out,
+        output_truncated: captured.output_truncated,
+        output,
         diagnostics,
     })
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn cancel_build(state: State<AppState>) -> bool {
+    if !state.build_running.load(Ordering::Acquire) { return false; }
+    state.build_cancel.store(true, Ordering::Release);
+    true
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -545,7 +621,8 @@ pub fn run() {
             launch_game,
             stop_game,
             get_game_status,
-            run_build
+            run_build,
+            cancel_build
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -559,6 +636,23 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compiler_messages_have_real_file_lines_and_ignore_unrelated_json() {
+        let source = concat!(
+            "{\"reason\":\"compiler-message\",\"message\":{\"level\":\"error\",",
+            "\"message\":\"unexpected token\",\"spans\":[{\"is_primary\":true,",
+            "\"file_name\":\"src/main.rs\",\"line_start\":21}]}}\n",
+            "{\"reason\":\"build-script-executed\",\"message\":{\"level\":\"error\",",
+            "\"message\":\"fake\",\"spans\":[]}}\n"
+        );
+        let result = compiler_diagnostics(source);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].level, "error");
+        assert_eq!(result[0].message, "unexpected token");
+        assert_eq!(result[0].file.as_deref(), Some("src/main.rs"));
+        assert_eq!(result[0].line, Some(21));
+    }
 
     #[test]
     fn documents_save_atomically_and_refuse_stale_revision() {
