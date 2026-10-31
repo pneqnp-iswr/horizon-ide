@@ -2,6 +2,7 @@ mod build_runner;
 mod game_bridge;
 mod game_control;
 mod package_attestation;
+mod project_starter;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -34,6 +35,12 @@ enum AppError {
     BuildApprovalRequired,
     #[error("a Cargo build is already in progress")]
     BuildAlreadyRunning,
+    #[error("creating a starter requires explicit user approval")]
+    StarterApprovalRequired,
+    #[error("the starter generator is already running")]
+    StarterAlreadyRunning,
+    #[error("starter creation failed: {0}")]
+    StarterFailed(String),
     #[error("workspace has no Cargo.toml")]
     NotCargoWorkspace,
     #[error("isolated game smoke is already running")]
@@ -69,6 +76,7 @@ struct AppState {
     document_write_lock: Mutex<()>,
     build_running: AtomicBool,
     smoke_running: AtomicBool,
+    starter_running: AtomicBool,
     build_cancel: Arc<AtomicBool>,
     build_process: Arc<Mutex<Option<Child>>>,
     game_status: Mutex<GameStatus>,
@@ -675,6 +683,36 @@ fn cancel_build(state: State<AppState>) -> bool {
     true
 }
 
+/// Generate a new, data-only content mod from the *official tool* without
+/// invoking a shell or building/running untrusted project code.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+async fn create_content_starter(
+    tool_path: String,
+    parent_workspace: String,
+    name: String,
+    approved: bool,
+    state: State<'_, AppState>,
+) -> Result<project_starter::CreatedProject, AppError> {
+    if !approved { return Err(AppError::StarterApprovalRequired); }
+    let root = state.workspace_root.lock().expect("workspace root lock poisoned")
+        .clone().ok_or(AppError::MissingWorkspaceRoot)?;
+    // The chosen parent is exactly the registered workspace, not arbitrary
+    // filesystem space selected by untrusted webview JavaScript.
+    if Path::new(&parent_workspace).canonicalize()? != root {
+        return Err(AppError::PathOutsideWorkspace);
+    }
+    if state.starter_running.swap(true, Ordering::AcqRel) {
+        return Err(AppError::StarterAlreadyRunning);
+    }
+    let task = tauri::async_runtime::spawn_blocking(move || {
+        project_starter::generate(Path::new(&tool_path), &root, &name)
+            .map_err(AppError::StarterFailed)
+    }).await;
+    state.starter_running.store(false, Ordering::Release);
+    task.map_err(|e| AppError::StarterFailed(e.to_string()))?
+}
+
 /// Official package static check without launching Horizon. The selected
 /// checker itself is trusted native code; explicit user approval is required.
 #[cfg(feature = "desktop")]
@@ -759,6 +797,7 @@ pub fn run() {
             get_game_status,
             run_build,
             cancel_build,
+            create_content_starter,
             check_hmod_package,
             run_game_item_smoke
         ])

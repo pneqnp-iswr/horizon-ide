@@ -6,7 +6,7 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import './App.css';
 import { MockAIProvider } from './services/ai/provider';
-import { cancelBuild, checkHmodPackage, getGameStatus, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
+import { cancelBuild, checkHmodPackage, createContentStarter, getGameStatus, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
 import { useWorkspaceStore } from './store/useWorkspaceStore';
 import ProjectExplorer from './components/ProjectExplorer';
 import type { BuildDiagnostic, FileEntry, GameStatus } from './types/app';
@@ -29,6 +29,9 @@ function App() {
   const [gameProbe, setGameProbe] = useState('Select your installed horizon-client and check its Launch API.');
   const [controlPath, setControlPath] = useState('');
   const [checkerPath, setCheckerPath] = useState('');
+  const [starterName, setStarterName] = useState('');
+  const [starterBusy, setStarterBusy] = useState(false);
+  const [starterStatus, setStarterStatus] = useState('');
   const [packagePath, setPackagePath] = useState('');
   const [targetItemId, setTargetItemId] = useState('');
   const [smokeBusy, setSmokeBusy] = useState(false);
@@ -181,6 +184,45 @@ function App() {
     }
   }
 
+  async function onCreateContentStarter() {
+    if (!workspaceRoot || !checkerPath || !starterName || starterBusy) return;
+    if (selectedFile && fileContents !== savedContents) {
+      setStarterStatus('Save your unsaved editor changes before creating another project.');
+      return;
+    }
+    if (!window.confirm(
+      'Create a new official Horizon content mod inside this workspace? The trusted native cargo-horizon-mod generator will execute with your user permissions. ' +
+      'The destination must not already exist. This creates a new folder and switches the editor to its generated manifest.',
+    )) return;
+    setStarterBusy(true);
+    setStarterStatus('Generating verified official content project…');
+    let generatedPath = '';
+    try {
+      await setWorkspaceRoot(workspaceRoot);
+      const created = await createContentStarter(checkerPath, workspaceRoot, starterName, true);
+      generatedPath = created.path;
+      // Only switch workspaces after the official generator and manifest check
+      // finish. Read the manifest directly; no made-up editor contents.
+      await setWorkspaceRoot(created.path);
+      const entries = await listDirectory(created.path);
+      const manifest = await readTextFile(created.manifestPath);
+      persistWorkspaceRoot(created.path);
+      setFiles(entries);
+      setSelectedFile(created.manifestPath);
+      setFileContents(manifest.contents);
+      setSavedContents(manifest.contents);
+      setDocumentRevision(manifest.revision);
+      setSaveNotice('');
+      setStarterStatus(`Created ${created.modId}: official content template, not yet tested in game.`);
+    } catch (error) {
+      setStarterStatus(generatedPath
+        ? `Project created at ${generatedPath}, but automatic opening failed: ${String(error)}`
+        : `Could not create content project: ${String(error)}`);
+    } finally {
+      setStarterBusy(false);
+    }
+  }
+
   async function onVerifyPackage() {
     if (!checkerPath || !packagePath || !targetItemId || !workspaceRoot || smokeBusy) return;
     if (!window.confirm('Run the trusted official cargo-horizon-mod checker on this workspace package? It executes a selected native binary but does not launch Minecraft.')) return;
@@ -302,6 +344,23 @@ function App() {
           />
         </label>
         <button onClick={() => void refreshFiles()}>Load Files</button>
+        <details className="starter-tools">
+          <summary>New Horizon Content Mod</summary>
+          <label>
+            Official cargo-horizon-mod executable
+            <input value={checkerPath} onChange={(event) => setCheckerPath(event.target.value)}
+              placeholder="C:/Tools/cargo-horizon-mod.exe" />
+          </label>
+          <label>
+            New project folder
+            <input value={starterName} onChange={(event) => setStarterName(event.target.value)}
+              placeholder="ruby_mod" />
+          </label>
+          <button onClick={() => void onCreateContentStarter()} disabled={
+            starterBusy || !workspaceRoot || !checkerPath || !starterName
+          }>{starterBusy ? 'Generating…' : 'Create official starter'}</button>
+          <p role="status" aria-live="polite">{starterStatus}</p>
+        </details>
         <label>
           Theme
           <select value={theme} onChange={(event) => setTheme(event.target.value as 'dark' | 'light')}>
