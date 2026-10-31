@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { BuildResult, DocumentSnapshot, FileEntry, GameItemSmokeReport, GameStatus, HorizonInstallationReport } from '../../types/app';
+import type { BuildResult, ContentAttestation, DocumentSnapshot, FileEntry, GameItemSmokeReport, GameStatus, HorizonInstallationReport } from '../../types/app';
 
 export async function setWorkspaceRoot(path: string): Promise<void> {
   await invoke('set_workspace_root', { path });
@@ -51,5 +51,17 @@ export async function runGameItemSmoke(
 ): Promise<GameItemSmokeReport> {
   return invoke<GameItemSmokeReport>('run_game_item_smoke', {
     ctlPath, gamePath, checkerPath, packagePath, itemId, approved,
+  });
+}
+
+/** Run the trusted official package checker without starting a game. */
+export async function checkHmodPackage(
+  checkerPath: string,
+  packagePath: string,
+  itemId: string,
+  approved: boolean,
+): Promise<ContentAttestation> {
+  return invoke<ContentAttestation>('check_hmod_package', {
+    checkerPath, packagePath, itemId, approved,
   });
 }
