@@ -6,7 +6,7 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import './App.css';
 import { MockAIProvider } from './services/ai/provider';
-import { cancelBuild, checkHmodPackage, createContentStarter, getGameStatus, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
+import { buildContentMod, cancelBuild, checkHmodPackage, createContentStarter, getGameStatus, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
 import { useWorkspaceStore } from './store/useWorkspaceStore';
 import ProjectExplorer from './components/ProjectExplorer';
 import type { BuildDiagnostic, FileEntry, GameStatus } from './types/app';
@@ -43,6 +43,7 @@ function App() {
   const [diagnostics, setDiagnostics] = useState<BuildDiagnostic[]>([]);
   const [buildOutput, setBuildOutput] = useState('Build output will appear here.');
   const [buildBusy, setBuildBusy] = useState(false);
+  const [contentBuildStatus, setContentBuildStatus] = useState('No .hmod built in this session.');
   const [explorerRevision, setExplorerRevision] = useState(0);
   const [leftWidth, setLeftWidth] = useState(45);
   const [bottomHeight, setBottomHeight] = useState(35);
@@ -156,6 +157,38 @@ function App() {
     } catch (error) {
       setBuildOutput(`Build could not start or finish: ${String(error)}`);
       terminalInstanceRef.current?.writeln(`Build error: ${String(error)}`);
+    } finally {
+      setBuildBusy(false);
+    }
+  }
+
+  async function onBuildContentMod() {
+    if (!workspaceRoot || !checkerPath || buildBusy) return;
+    if (selectedFile && fileContents !== savedContents) {
+      setContentBuildStatus('Save your unsaved editor changes before building the .hmod.');
+      return;
+    }
+    if (!window.confirm(
+      'Run the trusted native cargo-horizon-mod tool in this local workspace? ' +
+      'The IDE will execute official build and check commands with a 120-second limit, ' +
+      'verify the produced .hmod, and prepare its path for a separate, explicitly approved game test. ' +
+      'No Minecraft session will be started by this build.',
+    )) return;
+    setBuildBusy(true);
+    setContentBuildStatus('Building the content package through the official local Horizon tool…');
+    setBuildOutput('Running cargo-horizon-mod build; followed by official package check --json.');
+    setDiagnostics([]);
+    try {
+      await setWorkspaceRoot(workspaceRoot);
+      const result = await buildContentMod(checkerPath, workspaceRoot, true);
+      setPackagePath(result.artifactPath);
+      setContentBuildStatus(`Verified .hmod: ${result.modId} ${result.version}, SHA ${result.sha256.slice(0, 12)}…; not tested in game.`);
+      setBuildOutput(JSON.stringify(result, null, 2));
+      terminalInstanceRef.current?.writeln(`Official content build verified: ${result.artifactPath}`);
+    } catch (error) {
+      setContentBuildStatus(`Content build failed: ${String(error)}`);
+      setBuildOutput(`Official content build failed: ${String(error)}`);
+      terminalInstanceRef.current?.writeln(`Content package build failure: ${String(error)}`);
     } finally {
       setBuildBusy(false);
     }
@@ -467,9 +500,14 @@ function App() {
               <button onClick={() => void onBuild()} disabled={!workspaceRoot || buildBusy}>
                 {buildBusy ? 'Building…' : 'Run Build'}
               </button>
+              <button onClick={() => void onBuildContentMod()} disabled={!workspaceRoot || !checkerPath || buildBusy}
+                title="Build the official data-only .hmod locally using cargo-horizon-mod">
+                {buildBusy ? 'Build active…' : 'Build .hmod'}
+              </button>
               <button onClick={() => void onCancelBuild()} disabled={!buildBusy}>Cancel</button>
             </div>
           </header>
+          <p className="content-build-status" role="status" aria-live="polite">{contentBuildStatus}</p>
           <div className="bottom-grid">
             <pre className="build-output">{buildOutput}</pre>
             <div className="diagnostics">
