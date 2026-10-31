@@ -327,6 +327,46 @@ function App() {
     setAiResponse(response.content);
   }
 
+  // Editor shortcuts operate inside the actual Tauri workspace, never by
+  // silently executing source in a browser. Native process actions retain
+  // the same explicit confirmation as their visible buttons.
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (event.repeat || event.isComposing || event.altKey) return;
+      const commandKey = event.ctrlKey || event.metaKey;
+      const key = event.key.toLowerCase();
+      if (commandKey && !event.shiftKey && key === 's') {
+        // The WebView's default Save Page dialog must never appear in an IDE.
+        event.preventDefault();
+        if (selectedFile && !savingFile) void saveCurrentFile();
+        return;
+      }
+      if (commandKey && event.shiftKey && key === 'b') {
+        event.preventDefault();
+        if (workspaceRoot && checkerPath && !buildBusy) {
+          void onBuildContentMod();
+        } else if (!checkerPath) {
+          setBuildOutput('Choose the trusted cargo-horizon-mod executable in New Horizon Content Mod first.');
+        }
+        return;
+      }
+      if (!commandKey && event.key === 'F5') {
+        // Prevent a WebView reload, which could destroy unsaved editor state.
+        event.preventDefault();
+        if (!event.shiftKey && status === 'disconnected') {
+          if (gamePath.trim()) void onLaunchGame();
+          else setGameProbe('Select your trusted horizon-client executable before pressing F5.');
+        } else if (event.shiftKey && (status === 'running' || status === 'launching')) {
+          void onStopGame();
+        }
+      }
+    };
+    // Capture before Monaco so these workspace shortcuts are consistent in
+    // panels, while ordinary editor keystrokes are untouched.
+    window.addEventListener('keydown', handleShortcut, true);
+    return () => window.removeEventListener('keydown', handleShortcut, true);
+  });
+
   function attachHorizontalResize(event: ReactMouseEvent<HTMLDivElement>) {
     event.preventDefault();
     const startX = event.clientX;
@@ -364,6 +404,7 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <h1>Horizon IDE</h1>
+        <p className="shortcut-legend">Ctrl+S Save · Ctrl+Shift+B Build .hmod · F5 Launch · Shift+F5 Stop</p>
         <label>
           Workspace Root
           <input

@@ -1,7 +1,7 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
-import { buildContentMod, cancelBuild, checkHmodPackage, createContentStarter, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile } from './services/tauri/client';
+import { buildContentMod, cancelBuild, checkHmodPackage, createContentStarter, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, stopGame } from './services/tauri/client';
 
 vi.mock('@monaco-editor/react', () => ({
   default: ({ value, onChange }: { value: string; onChange: (text: string) => void }) => (
@@ -109,6 +109,52 @@ afterEach(() => {
 });
 
 describe('App', () => {
+  it('Ctrl+S saves the active Monaco file through revisioned desktop IPC', async () => {
+    vi.mocked(listDirectory).mockResolvedValueOnce([
+      { path: 'C:/dev/mod/main.rs', name: 'main.rs', is_dir: false },
+    ]);
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/dev/horizon-mod'), {
+      target: { value: 'C:/dev/mod' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Load Files' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Open file main.rs' }));
+    await waitFor(() => expect(vi.mocked(readTextFile)).toHaveBeenCalledWith('C:/dev/mod/main.rs'));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Monaco mock document' }), {
+      target: { value: 'let x = 1;' },
+    });
+    fireEvent.keyDown(window, { key: 's', ctrlKey: true });
+    await waitFor(() => expect(vi.mocked(saveTextFile)).toHaveBeenCalledWith(
+      'C:/dev/mod/main.rs', 'let x = 1;', 'a'.repeat(64),
+    ));
+  });
+
+  it('Ctrl+Shift+B invokes only the approved content build, never bypasses consent', () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/dev/horizon-mod'), {
+      target: { value: 'C:/dev/mod' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('C:/Tools/cargo-horizon-mod.exe'), {
+      target: { value: 'C:/Tools/cargo-horizon-mod.exe' },
+    });
+    fireEvent.keyDown(window, { key: 'B', ctrlKey: true, shiftKey: true });
+    expect(vi.mocked(buildContentMod)).not.toHaveBeenCalled();
+  });
+
+  it('F5 launches external Horizon with consent and Shift+F5 stops owned game process', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/Horizon/horizon-client.exe'), {
+      target: { value: 'C:/Horizon/horizon-client.exe' },
+    });
+    fireEvent.keyDown(window, { key: 'F5' });
+    await waitFor(() => expect(vi.mocked(launchGame)).toHaveBeenCalledWith('C:/Horizon/horizon-client.exe', []));
+    await screen.findByText('Running');
+    fireEvent.keyDown(window, { key: 'F5', shiftKey: true });
+    await waitFor(() => expect(vi.mocked(stopGame)).toHaveBeenCalled());
+  });
+
   it('renders core workspace panels', () => {
     render(<App />);
     expect(screen.getByText('Horizon IDE')).toBeTruthy();
