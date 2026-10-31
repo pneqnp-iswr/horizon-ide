@@ -45,7 +45,7 @@ jobs:
           }
           New-Item -ItemType Directory -Force -Path 'dist-portable/HorizonIDE-Windows' | Out-Null
           Copy-Item -LiteralPath $exe -Destination 'dist-portable/HorizonIDE-Windows/HorizonIDE.exe'
-          @'
+          $readme = @'
           Horizon IDE — Windows native desktop preview
 
           1. Extract this ZIP into a folder you control.
@@ -58,7 +58,8 @@ jobs:
           SECURITY: This preview executable is UNSIGNED, not a production release.
           Verify the SHA256 published alongside the ZIP on the same GitHub Actions run.
           Do not bypass security prompts for binaries from untrusted sources.
-          '@ | Set-Content -LiteralPath 'dist-portable/HorizonIDE-Windows/README.txt' -Encoding utf8
+          '@
+          Set-Content -LiteralPath 'dist-portable/HorizonIDE-Windows/README.txt' -Value $readme -Encoding utf8
           $hash = (Get-FileHash -LiteralPath 'dist-portable/HorizonIDE-Windows/HorizonIDE.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  HorizonIDE.exe" | Set-Content -LiteralPath 'dist-portable/HorizonIDE-Windows/HorizonIDE.exe.sha256' -Encoding ascii
           Compress-Archive -Path 'dist-portable/HorizonIDE-Windows/*' -DestinationPath 'dist-portable/HorizonIDE-Windows-preview.zip' -CompressionLevel Optimal
