@@ -3,6 +3,7 @@
 //! does NOT claim that the item originated from the selected .hmod package.
 //! Package membership + official static checks are separate acceptance gates.
 use crate::game_bridge::{item_id_is_valid, parse_inventory, verify_one_added, Inventory};
+use crate::package_attestation::{parse_official_check, ContentAttestation};
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -38,6 +39,7 @@ pub struct ItemSmokeReport {
     level: &'static str,
     item_id: String,
     package_sha256: String,
+    static_attestation: ContentAttestation,
     package_item_origin_verified: bool,
     game_version: Option<String>,
     launch_accepted: bool,
@@ -175,6 +177,29 @@ fn validate_ctl(ctl: &Path, game: &Path) -> Result<(), SmokeError> {
     Ok(())
 }
 
+/// Invoke only an explicitly approved, selected official checker. Filename is
+/// not identity/authenticity: user still must trust the binary they selected.
+fn official_check(checker: &Path, package: &Path, sha256: &str, item: &str) -> Result<ContentAttestation, SmokeError> {
+    let path = checker.canonicalize()?;
+    if !path.is_file() {
+        return Err(SmokeError("checker is not a regular file".into()));
+    }
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if !["cargo-horizon-mod", "cargo-horizon-mod.exe"].iter().any(|n| name.eq_ignore_ascii_case(n)) {
+        return Err(SmokeError("expected official cargo-horizon-mod executable".into()));
+    }
+    let args = vec![
+        "check".to_string(),
+        package.display().to_string(),
+        "--json".to_string(),
+    ];
+    let (status, stdout) = run_bounded(&path, &args, Duration::from_secs(45))?;
+    if !status.success() {
+        return Err(SmokeError("official Horizon package checker rejected this .hmod".into()));
+    }
+    parse_official_check(&stdout, sha256, item).map_err(SmokeError)
+}
+
 fn count(inventory: &Inventory, item: &str) -> u64 {
     inventory.counts.get(item).copied().unwrap_or(0)
 }
@@ -182,13 +207,19 @@ fn count(inventory: &Inventory, item: &str) -> u64 {
 /// Explicitly approved one-shot smoke against a disposable game world.
 /// Never report actual package-origin verification until the archive manifest
 /// and official content registry checks are connected.
-pub fn smoke(ctl: &Path, game: &Path, package: &Path, item: &str) -> Result<ItemSmokeReport, SmokeError> {
+pub fn smoke(ctl: &Path, game: &Path, checker: &Path, package: &Path, item: &str) -> Result<ItemSmokeReport, SmokeError> {
     if !item_id_is_valid(item) { return Err(SmokeError("invalid namespaced target item id".into())); }
     if package.extension().and_then(|e| e.to_str()) != Some("hmod") {
         return Err(SmokeError("select an existing .hmod package".into()));
     }
     validate_ctl(ctl, game)?;
     let digest = file_digest(package)?;
+    // Static verification must complete *before* any world is created.
+    // It proves a valid content mod, not membership of a specific item file.
+    let attestation = official_check(checker, package, &digest, item)?;
+    if file_digest(package)? != digest {
+        return Err(SmokeError("package changed during static verification".into()));
+    }
     let dir = session_dir()?;
     let socket = dir.join(if cfg!(windows) { "control.json" } else { "control.sock" });
     let path_game = dir.join("game");
@@ -260,6 +291,7 @@ pub fn smoke(ctl: &Path, game: &Path, package: &Path, item: &str) -> Result<Item
             level: "inventory-observed",
             item_id: item.to_owned(),
             package_sha256: digest,
+            static_attestation: attestation,
             package_item_origin_verified: false,
             game_version: launched.get("version").and_then(Value::as_str).map(str::to_owned),
             launch_accepted: true,
@@ -271,7 +303,7 @@ pub fn smoke(ctl: &Path, game: &Path, package: &Path, item: &str) -> Result<Item
             session_cleaned: false,
             notes: vec![
                 "The real game returned consistent inventory slots and exact item delta.".into(),
-                "This does not prove the item originated from the supplied .hmod; archive membership and official registry checks remain pending.".into(),
+                "Official static registry checks passed and mod ID matched the target namespace, but an exact item member and package origin are NOT yet verified.".into(),
                 "External process; no interactive in-window viewport or gameplay events verified.".into(),
             ],
         })
@@ -307,7 +339,7 @@ mod tests {
     #[test]
     fn refuses_non_archive_and_invalid_target_before_any_session() {
         assert!(smoke(Path::new("missing"), Path::new("missing"),
-            Path::new("mod.hmod"), "../fake").is_err());
+            Path::new("missing_checker"), Path::new("mod.hmod"), "../fake").is_err());
     }
 
     #[test]
