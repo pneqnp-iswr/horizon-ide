@@ -6,7 +6,7 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import './App.css';
 import { MockAIProvider } from './services/ai/provider';
-import { cancelBuild, checkHmodPackage, createContentStarter, getGameStatus, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
+import { buildContentMod, cancelBuild, checkHmodPackage, createContentStarter, getGameStatus, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
 import { useWorkspaceStore } from './store/useWorkspaceStore';
 import ProjectExplorer from './components/ProjectExplorer';
 import type { BuildDiagnostic, FileEntry, GameStatus } from './types/app';
@@ -156,6 +156,34 @@ function App() {
     } catch (error) {
       setBuildOutput(`Build could not start or finish: ${String(error)}`);
       terminalInstanceRef.current?.writeln(`Build error: ${String(error)}`);
+    } finally {
+      setBuildBusy(false);
+    }
+  }
+
+  async function onBuildContentMod() {
+    if (!workspaceRoot || !checkerPath || buildBusy) return;
+    if (selectedFile && fileContents !== savedContents) {
+      setBuildOutput('Save your editor changes before building the content mod.');
+      return;
+    }
+    if (!window.confirm(
+      'Run your trusted cargo-horizon-mod executable to BUILD this data-only .hmod and then run its official static checker? ' +
+      'This executes the selected native binary with your user permissions. No game will be started.',
+    )) return;
+    setBuildBusy(true);
+    setBuildOutput('Building content .hmod through the official tool…');
+    setDiagnostics([]);
+    try {
+      await setWorkspaceRoot(workspaceRoot);
+      const result = await buildContentMod(checkerPath, workspaceRoot, true);
+      setPackagePath(result.artifactPath);
+      setBuildOutput(JSON.stringify(result, null, 2));
+      setSmokeStatus(`Built ${result.modId} .hmod, SHA ${result.sha256.slice(0, 12)}…; selected for isolated game smoke. NOT yet game-tested.`);
+      terminalInstanceRef.current?.writeln(`Official content build: ${result.artifactPath} (static check passed, not game tested)`);
+    } catch (error) {
+      setBuildOutput(`Content .hmod build failed: ${String(error)}`);
+      terminalInstanceRef.current?.writeln(`Content build failed: ${String(error)}`);
     } finally {
       setBuildBusy(false);
     }
@@ -466,6 +494,9 @@ function App() {
             <div className="button-row">
               <button onClick={() => void onBuild()} disabled={!workspaceRoot || buildBusy}>
                 {buildBusy ? 'Building…' : 'Run Build'}
+              </button>
+              <button onClick={() => void onBuildContentMod()} disabled={!workspaceRoot || !checkerPath || buildBusy}>
+                {buildBusy ? 'Building…' : 'Build .hmod'}
               </button>
               <button onClick={() => void onCancelBuild()} disabled={!buildBusy}>Cancel</button>
             </div>
