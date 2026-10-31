@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
-import { askLocalAi, buildContentMod, cancelBuild, checkHmodPackage, createContentStarter, launchGame, listDirectory, listLocalAiModels, readTextFile, runBuild, runGameItemSmoke, saveTextFile, stopGame } from './services/tauri/client';
+import { askLocalAi, buildContentMod, cancelBuild, checkHmodPackage, createContentStarter, getGameWindowProbe, launchGame, listDirectory, listLocalAiModels, readTextFile, runBuild, runGameItemSmoke, saveTextFile, stopGame } from './services/tauri/client';
 
 vi.mock('@monaco-editor/react', () => ({
   default: ({ value, onChange }: { value: string; onChange: (text: string) => void }) => (
@@ -26,6 +26,17 @@ vi.mock('@xterm/addon-fit', () => ({
 
 vi.mock('./services/tauri/client', () => ({
   getGameStatus: vi.fn().mockResolvedValue('disconnected'),
+  getGameWindowProbe: vi.fn().mockResolvedValue({
+    status: 'native-window-found',
+    processId: 1234,
+    selected: {
+      title: 'Horizon', width: 1440, height: 900,
+      visible: true, topLevel: true, processId: 1234,
+      nativeHandle: '0x123',
+    },
+    candidateCount: 1, embedded: false, playableVerified: false,
+    warning: 'Discovery is not rendering or embedding.',
+  }),
   inspectHorizonClient: vi.fn().mockResolvedValue({
     launchApi: '0.1.0',
     horizon: 'Horizon test',
@@ -259,6 +270,37 @@ describe('App', () => {
     fireEvent.click(screen.getByText('Check Horizon'));
     expect(await screen.findByText(/Game load and embedding have NOT been verified/)).toBeTruthy();
   });
+  it('finds only the actual owned native game window and does not claim embedded gameplay', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/Horizon/horizon-client.exe'), {
+      target: { value: 'C:/Horizon/horizon-client.exe' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Launch' }));
+    expect(await screen.findByText('Running')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Find native window' }));
+    expect(await screen.findByText(/Found the game window belonging to PID 1234/)).toBeTruthy();
+    expect(screen.getByText(/game is not yet embedded/)).toBeTruthy();
+    expect(vi.mocked(getGameWindowProbe)).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not invent a native window when Horizon has no usable HWND', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(getGameWindowProbe).mockResolvedValueOnce({
+      status: 'no-native-window', processId: 567,
+      selected: null, candidateCount: 0, embedded: false,
+      playableVerified: false, warning: 'Not embedded.',
+    });
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/Horizon/horizon-client.exe'), {
+      target: { value: 'C:/Horizon/horizon-client.exe' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Launch' }));
+    await screen.findByText('Running');
+    fireEvent.click(screen.getByRole('button', { name: 'Find native window' }));
+    expect(await screen.findByText(/no usable top-level Windows game window/)).toBeTruthy();
+  });
+
   it('does not launch the disposable Horizon session without explicit consent', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false);
     render(<App />);
