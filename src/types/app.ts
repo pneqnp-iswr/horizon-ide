@@ -78,3 +78,15 @@ export interface CreatedContentProject {
   template: 'official-horizon-content';
   gameLoadVerified: false;
 }
+
+/** A data-only .hmod built by the official tool and checked against SHA-256. */
+export interface ContentBuildResult {
+  succeeded: true;
+  artifactPath: string;
+  sha256: string;
+  modId: string;
+  version: string;
+  contentApi: '0.2';
+  staticCheckPassed: true;
+  inGameVerified: false;
+}
