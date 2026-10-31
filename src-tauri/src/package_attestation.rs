@@ -64,8 +64,11 @@ pub fn parse_official_check(
     }
     let capabilities = report.get("capabilities")
         .and_then(Value::as_array).ok_or("checker report lacks capabilities")?;
-    if !capabilities.iter().any(|cap| cap.as_str() == Some("registries")) {
-        return Err("content mod does not declare the registries capability".into());
+    if capabilities.len() != 1 || capabilities[0].as_str() != Some("registries") {
+        return Err("test accepts data-only content mods with registries capability only".into());
+    }
+    if report.get("api_level").is_some_and(|v| !v.is_null()) {
+        return Err("test refuses packages with code API imports".into());
     }
     let digest = field("sha256")?;
     if !digest.eq_ignore_ascii_case(expected_sha256) {
@@ -124,6 +127,8 @@ mod tests {
             ("kind",json!("native-mod")),
             ("api",json!("0.1")),
             ("capabilities",json!(["hud"])),
+            ("api_level",json!(1)),
+            ("capabilities",json!(["registries","game-read"])),
             ("id",json!("minecraft")),
         ] {
             let previous = p["report"][key].clone();
