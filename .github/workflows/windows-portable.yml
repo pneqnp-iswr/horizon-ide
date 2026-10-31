@@ -1,0 +1,79 @@
+name: Windows portable desktop application
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'src-tauri/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/windows-portable.yml'
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  build-portable:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout reviewed source
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install locked frontend dependencies
+        run: npm ci
+
+      - name: Compile the real Tauri Windows desktop executable with bundled UI
+        run: npm run tauri:build -- --no-bundle
+
+      - name: Package and checksum an unsigned Windows preview
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = 'src-tauri/target/release/horizon-ide.exe'
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+            throw "Tauri desktop executable was not created at $exe"
+          }
+          New-Item -ItemType Directory -Force -Path 'dist-portable/HorizonIDE-Windows' | Out-Null
+          Copy-Item -LiteralPath $exe -Destination 'dist-portable/HorizonIDE-Windows/HorizonIDE.exe'
+          @'
+          Horizon IDE — Windows native desktop preview
+
+          1. Extract this ZIP into a folder you control.
+          2. Run HorizonIDE.exe directly. It is a Tauri/WebView2 desktop application,
+             not a website, and does not require a running Vite server.
+          3. Windows WebView2 Runtime may be required on older installations.
+          4. Install trusted Horizon client/control binaries separately to test mods;
+             game assets, credentials and proprietary Minecraft resources are not bundled.
+
+          SECURITY: This preview executable is UNSIGNED, not a production release.
+          Verify the SHA256 published alongside the ZIP on the same GitHub Actions run.
+          Do not bypass security prompts for binaries from untrusted sources.
+          '@ | Set-Content -LiteralPath 'dist-portable/HorizonIDE-Windows/README.txt' -Encoding utf8
+          $hash = (Get-FileHash -LiteralPath 'dist-portable/HorizonIDE-Windows/HorizonIDE.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  HorizonIDE.exe" | Set-Content -LiteralPath 'dist-portable/HorizonIDE-Windows/HorizonIDE.exe.sha256' -Encoding ascii
+          Compress-Archive -Path 'dist-portable/HorizonIDE-Windows/*' -DestinationPath 'dist-portable/HorizonIDE-Windows-preview.zip' -CompressionLevel Optimal
+          $zipHash = (Get-FileHash -LiteralPath 'dist-portable/HorizonIDE-Windows-preview.zip' -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$zipHash  HorizonIDE-Windows-preview.zip" | Set-Content -LiteralPath 'dist-portable/HorizonIDE-Windows-preview.zip.sha256' -Encoding ascii
+          "### Horizon IDE (native Windows preview)" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          "Executable: HorizonIDE.exe (bundled Tauri UI, no external dev web server)" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          "Unsigned preview; ZIP SHA256: `$zipHash`" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload portable native app (not a release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: HorizonIDE-Windows-Portable-Preview
+          path: |
+            dist-portable/HorizonIDE-Windows-preview.zip
+            dist-portable/HorizonIDE-Windows-preview.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
