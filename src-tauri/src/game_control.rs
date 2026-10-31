@@ -210,8 +210,17 @@ pub fn smoke(ctl: &Path, game: &Path, package: &Path, item: &str) -> Result<Item
     let launched = match launched {
         Ok(reply) => reply,
         Err(error) => {
-            let _ = fs::remove_dir_all(&dir);
-            return Err(error);
+            // The control process could have spawned the actual game before
+            // itself failing or timing out. Never delete a potentially live
+            // session without confirming a successful quit.
+            let quit = call(ctl, &socket, &["quit"], Duration::from_secs(15));
+            if quit.is_ok() {
+                let _ = fs::remove_dir_all(&dir);
+            }
+            return Err(SmokeError(format!(
+                "launch failed: {error}; temporary session {}",
+                if quit.is_ok() { "was closed" } else { "may still be active; retained at" }
+            ) + if quit.is_ok() { String::new() } else { format!(" {}", dir.display()) }.as_str()));
         }
     };
 
@@ -272,14 +281,17 @@ pub fn smoke(ctl: &Path, game: &Path, package: &Path, item: &str) -> Result<Item
         Ok(mut report) => {
             report.session_cleaned = quit.is_ok();
             if quit.is_err() {
-                report.notes.push("Game quit could not be confirmed: the temporary session directory was retained for manual inspection.".into());
+                report.notes.push(format!(
+                    "Game quit could not be confirmed. Manual inspection required at {}",
+                    dir.display()
+                ));
             }
             Ok(report)
         }
         Err(error) => Err(SmokeError(format!(
             "{}; game quit {}",
             error,
-            if quit.is_ok() { "requested" } else { "NOT confirmed; inspect the owned test session" }
+            if quit.is_ok() { "requested".to_string() } else { format!("NOT confirmed; inspect {}", dir.display()) }
         ))),
     }
 }
