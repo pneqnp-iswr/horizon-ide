@@ -11,7 +11,7 @@ This feature runs **in the Tauri desktop application**, not on a hosted website.
 ## Use it
 
 1. Open Horizon IDE's native desktop window and find **Local AI Coding Assistant** in the sidebar.
-2. Start an **independently trusted** LM Studio or Ollama local server. Enter the exact model ID known to the server; the IDE does not silently choose a cloud endpoint or download model weights.
+2. Start an **independently trusted** LM Studio or Ollama local server. Click **Discover local models** to read its OpenAI-compatible `/v1/models` list and choose a reported ID, or enter the exact loaded model ID manually. Discovery sends no editor code. The IDE does not silently choose a cloud endpoint or download model weights.
 3. Write a request. If you want context from the current Monaco buffer, explicitly enable **Include current editor contents in prompt** (off by default, maximum 64 KiB).
 4. Confirm sending the selected prompt/context to the local server each time. The proposal appears in the sidebar as **read-only text**.
 
