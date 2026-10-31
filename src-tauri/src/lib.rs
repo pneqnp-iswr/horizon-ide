@@ -746,6 +746,7 @@ async fn run_game_item_smoke(
     checker_path: String,
     package_path: String,
     item_id: String,
+    resources_path: Option<String>,
     approved: bool,
     state: State<'_, AppState>,
 ) -> Result<game_control::ItemSmokeReport, AppError> {
@@ -755,6 +756,9 @@ async fn run_game_item_smoke(
     })?;
     let ctl = PathBuf::from(ctl_path).canonicalize()?;
     let checker = PathBuf::from(checker_path).canonicalize()?;
+    let selected_resources = resources_path
+        .filter(|path| !path.trim().is_empty())
+        .map(PathBuf::from);
     let root = state.workspace_root.lock().expect("workspace root lock poisoned")
         .clone().ok_or(AppError::MissingWorkspaceRoot)?;
     let package = ensure_within_workspace(&root, Path::new(&package_path))?;
@@ -773,7 +777,7 @@ async fn run_game_item_smoke(
         // caller explicitly approved this disposable session.
         probe_horizon_installation(&game)
             .map_err(|e| format!("Launch API: {e}"))?;
-        game_control::smoke(&ctl, &game, &checker, &package, &item_id)
+        game_control::smoke(&ctl, &game, &checker, &package, &item_id, selected_resources.as_deref())
             .map_err(|e| e.to_string())
     }).await;
     state.smoke_running.store(false, Ordering::Release);

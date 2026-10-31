@@ -40,6 +40,7 @@ pub struct ItemSmokeReport {
     item_id: String,
     package_sha256: String,
     static_attestation: ContentAttestation,
+    explicit_resources_supplied: bool,
     package_item_origin_verified: bool,
     game_version: Option<String>,
     launch_accepted: bool,
@@ -213,6 +214,17 @@ pub fn check_package(checker: &Path, package: &Path, item: &str) -> Result<Conte
     Ok(evidence)
 }
 
+/// Prepared Minecraft resources are explicitly selected by their owner.
+/// This checks for the Horizon resource descriptor only, not authenticity
+/// or a successful horizon-prepare --check run.
+fn validate_resources(resources: &Path) -> Result<PathBuf, SmokeError> {
+    let path = resources.canonicalize()?;
+    if !path.is_dir() || !path.join("horizon-resources.json").is_file() {
+        return Err(SmokeError("selected directory lacks horizon-resources.json; prepare your own licensed game resources through Horizon".into()));
+    }
+    Ok(path)
+}
+
 fn count(inventory: &Inventory, item: &str) -> u64 {
     inventory.counts.get(item).copied().unwrap_or(0)
 }
@@ -220,13 +232,15 @@ fn count(inventory: &Inventory, item: &str) -> u64 {
 /// Explicitly approved one-shot smoke against a disposable game world.
 /// Never report actual package-origin verification until the archive manifest
 /// and official content registry checks are connected.
-pub fn smoke(ctl: &Path, game: &Path, checker: &Path, package: &Path, item: &str) -> Result<ItemSmokeReport, SmokeError> {
+pub fn smoke(ctl: &Path, game: &Path, checker: &Path, package: &Path, item: &str, resources: Option<&Path>) -> Result<ItemSmokeReport, SmokeError> {
     if !item_id_is_valid(item) { return Err(SmokeError("invalid namespaced target item id".into())); }
     if package.extension().and_then(|e| e.to_str()) != Some("hmod") {
         return Err(SmokeError("select an existing .hmod package".into()));
     }
     validate_ctl(ctl, game)?;
-    // Official static verification happens *before* creating any game world.
+    // Check caller-selected resources before creating a world. Horizon itself
+    // validates game resource contents; this is only a safe path preflight.
+    let prepared = resources.map(validate_resources).transpose()?;
     let attestation = check_package(checker, package, item)?;
     let digest = attestation.sha256.clone();
     let dir = session_dir()?;
@@ -242,6 +256,13 @@ pub fn smoke(ctl: &Path, game: &Path, checker: &Path, package: &Path, item: &str
         "--offscreen".into(),
         "--dev-mod".into(), package.display().to_string(),
     ];
+    let mut launch = launch;
+    if let Some(resources) = &prepared {
+        // The official horizon-ctl launch command forwards these game args,
+        // and suppresses auto-discovery when --resources was provided.
+        launch.push("--resources".into());
+        launch.push(resources.display().to_string());
+    }
 
     // The launch command starts a separate game process. If it refuses, no
     // ownership is established and we remove only the newly created folder.
@@ -301,6 +322,7 @@ pub fn smoke(ctl: &Path, game: &Path, checker: &Path, package: &Path, item: &str
             item_id: item.to_owned(),
             package_sha256: digest,
             static_attestation: attestation,
+            explicit_resources_supplied: prepared.is_some(),
             package_item_origin_verified: false,
             game_version: launched.get("version").and_then(Value::as_str).map(str::to_owned),
             launch_accepted: true,
@@ -346,9 +368,21 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn resource_preflight_requires_a_prepared_descriptor() {
+        let name = format!("horizon-resource-path-test-{}-{}",
+            std::process::id(), SEQUENCE.fetch_add(1, Ordering::Relaxed));
+        let root = std::env::temp_dir().join(name);
+        fs::create_dir(&root).unwrap();
+        assert!(validate_resources(&root).is_err());
+        fs::write(root.join("horizon-resources.json"), "{}").unwrap();
+        assert_eq!(validate_resources(&root).unwrap(), root.canonicalize().unwrap());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn refuses_non_archive_and_invalid_target_before_any_session() {
         assert!(smoke(Path::new("missing"), Path::new("missing"),
-            Path::new("missing_checker"), Path::new("mod.hmod"), "../fake").is_err());
+            Path::new("missing_checker"), Path::new("mod.hmod"), "../fake", None).is_err());
     }
 
     #[test]
