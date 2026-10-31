@@ -37,6 +37,18 @@ export interface DocumentSnapshot {
   revision: string;
 }
 
+export interface ContentAttestation {
+  checker: 'cargo-horizon-mod';
+  checkerReportKind: 'mod';
+  modId: string;
+  version: string;
+  contentApi: '0.2';
+  sha256: string;
+  officialStaticCheckPassed: true;
+  targetNamespaceMatches: true;
+  targetMemberVerified: false;
+}
+
 /** Evidence from a real isolated horizon-ctl item observation.
  * This is not proof the supplied archive contains the item. */
 export interface GameItemSmokeReport {
@@ -44,6 +56,7 @@ export interface GameItemSmokeReport {
   level: 'inventory-observed';
   itemId: string;
   packageSha256: string;
+  staticAttestation: ContentAttestation;
   packageItemOriginVerified: false;
   gameVersion: string | null;
   launchAccepted: boolean;
