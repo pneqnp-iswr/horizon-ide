@@ -19,7 +19,11 @@ The product goal is one seamless application with a **directly playable Horizon 
 | Official content mod workflow | `cargo-horizon-mod new`, real `.hmod` build, official checksum check, and package auto-selection for isolated smoke | That the running game actually accepted the archive or its content |
 | AI | Extensible provider interface with mock responses and no automatic build rights | Autonomous, production-quality AI agent |
 
-**Integration status:** Desktop foundation (#1), runtime hardening (#2), revisioned saves (#7), bounded Cargo builds (#8), isolated sessions (#9), Game Bridge (#10), official `.hmod` verification (#11), nested Project Explorer (#12), genuine official project creation (#13), and selected prepared resources (#14) are merged to `master`. [#16: Build .hmod](https://github.com/pneqnp-iswr/horizon-ide/pull/16) is under review and remains unavailable in releases until merged and tested. These changes do not prove real game loading or an embedded playable viewport.
+**Integration status:** Desktop foundation (#1), runtime hardening (#2), revisioned saves (#7), bounded Cargo builds (#8), isolated sessions (#9), Game Bridge (#10), official `.hmod` verification (#11), nested Project Explorer (#12), genuine official project creation (#13), and selected prepared resources (#14) are merged to `master`. [#16: Build .hmod](https://github.com/pneqnp-iswr/horizon-ide/pull/16) is also merged and has passed Linux/Windows CI. These changes do not prove real game loading or an embedded playable viewport.
+
+## Windows desktop app
+
+Horizon IDE ships as an actual **Tauri desktop application**. To obtain an unsigned Windows `.exe` preview after the portable-build workflow succeeds, see [Windows desktop build and downloads](docs/WINDOWS_APP.md). The executable bundles the editor UI and does not need a Vite server, npm or a website to run. You still need a trusted, separately installed Horizon client to test Minecraft mods.
 
 ## Development
 
@@ -61,6 +65,6 @@ Our priorities are tracked in [#3 real game tests](https://github.com/pneqnp-isw
 - Accessibility, configurable layouts, English-first UI with planned Russian translation, keyboard-driven workflow.
 - Explain evidence honestly: **schema-valid → builds → game-loaded → gameplay-tested** are different levels.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md), [ROADMAP.md](ROADMAP.md), [SECURITY.md](SECURITY.md), [Runtime Contract](docs/HORIZON_RUNTIME_CONTRACT.md), [Official Starter](docs/OFFICIAL_STARTER.md), [Content Build](docs/CONTENT_BUILD.md), [Build Security](docs/BUILD_SECURITY.md), and [Experimental Game Item Smoke](docs/GAME_ITEM_SMOKE.md).
+See [ARCHITECTURE.md](ARCHITECTURE.md), [ROADMAP.md](ROADMAP.md), [SECURITY.md](SECURITY.md), [Runtime Contract](docs/HORIZON_RUNTIME_CONTRACT.md), [Windows App](docs/WINDOWS_APP.md), [Official Starter](docs/OFFICIAL_STARTER.md), [Content Build](docs/CONTENT_BUILD.md), [Build Security](docs/BUILD_SECURITY.md), and [Experimental Game Item Smoke](docs/GAME_ITEM_SMOKE.md).
 
 License: MIT. Horizon IDE is an independent project and is not endorsed by Mojang, Microsoft or Horizon maintainers.
