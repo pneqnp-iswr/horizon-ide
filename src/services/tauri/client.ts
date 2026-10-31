@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { BuildResult, ContentAttestation, ContentBuildResult, CreatedContentProject, DocumentSnapshot, FileEntry, GameItemSmokeReport, GameStatus, HorizonInstallationReport, LocalAiAnswer } from '../../types/app';
+import type { BuildResult, ContentAttestation, ContentBuildResult, CreatedContentProject, DocumentSnapshot, FileEntry, GameItemSmokeReport, GameStatus, HorizonInstallationReport, LocalAiAnswer, LocalAiModels } from '../../types/app';
 
 export async function setWorkspaceRoot(path: string): Promise<void> {
   await invoke('set_workspace_root', { path });
@@ -93,4 +93,9 @@ export async function askLocalAi(
   return invoke<LocalAiAnswer>('ask_local_ai', {
     provider, model, prompt, document, approved,
   });
+}
+
+/** Discovers IDs from the selected loopback provider, without editor content. */
+export async function listLocalAiModels(provider: 'lmstudio' | 'ollama'): Promise<LocalAiModels> {
+  return invoke<LocalAiModels>('list_local_ai_models', { provider });
 }
