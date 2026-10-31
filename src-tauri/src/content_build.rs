@@ -219,6 +219,68 @@ mod tests {
         assert!(check_report(&bad.to_string(), &"a".repeat(64), path).is_err());
     }
     #[test]
+    fn fake_official_cli_builds_then_attests_real_output_without_game_claim() {
+        let serial = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "horizon-content-build-fixture-{}-{serial}", std::process::id()
+        ));
+        let bin = root.join("bin");
+        let workspace = root.join("content");
+        fs::create_dir_all(&bin).unwrap();
+        fs::create_dir(&workspace).unwrap();
+        fs::write(workspace.join("horizon-mod.toml"), "id = \"ruby\"\napi = \"0.2\"\ncapabilities = [\"registries\"]\n").unwrap();
+
+        let fixture_bytes = b"PK\x03\x04test-content-fixture";
+        let sha = format!("{:x}", Sha256::digest(fixture_bytes));
+        let source = r####"
+fn main() {
+    let args = std::env::args().collect::<Vec<_>>();
+    let root = std::env::current_dir().unwrap();
+    if args.len() == 2 && args[1] == "build" {
+        let path = root.join("target/horizon-mod/ruby.hmod");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"PK\x03\x04test-content-fixture").unwrap();
+        println!("Built {}", path.display());
+    } else if args.len() == 4 && args[1] == "check" && args[3] == "--json" {
+        let digest = if root.join("mismatch").exists() { "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+                     else { "HASH_TOKEN" };
+        println!(r#"{{"ok":true,"report":{{"kind":"mod","id":"ruby","version":"0.1.0","api":"0.2","sha256":"{}","capabilities":["registries"],"api_level":null}}}}"#, digest);
+    } else {
+        std::process::exit(2);
+    }
+}
+"####;
+        let path = bin.join("fixture.rs");
+        fs::write(&path, source.replace("HASH_TOKEN", &sha)).unwrap();
+        let tool = bin.join(if cfg!(windows) { "cargo-horizon-mod.exe" } else { "cargo-horizon-mod" });
+        let status = Command::new("rustc").arg(&path).arg("-o").arg(&tool).status().unwrap();
+        assert!(status.success());
+
+        let create_cancel = || Arc::new(AtomicBool::new(false));
+        let create_owned = || Arc::new(Mutex::new(None));
+        let result = build(&tool, &workspace, create_cancel(), create_owned()).unwrap();
+        assert_eq!(result.mod_id, "ruby");
+        assert_eq!(result.sha256, sha);
+        assert!(result.static_check_passed);
+        assert!(!result.in_game_verified);
+        assert!(Path::new(&result.artifact_path).is_file());
+
+        fs::write(workspace.join("mismatch"), "1").unwrap();
+        assert!(build(&tool, &workspace, create_cancel(), create_owned()).is_err(),
+            "a forged checker hash must never pass");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bounded_capture_drains_without_retaining_extra_bytes() {
+        let buffer = vec![9u8; MAX_OUTPUT + 4096];
+        let captured = drain(std::io::Cursor::new(buffer)).unwrap();
+        assert_eq!(captured.0.len(), MAX_OUTPUT);
+        assert!(captured.1);
+    }
+
+    #[test]
     fn rejects_nonexistent_or_non_content_workspaces_before_any_tool_launch() {
         let cancel = Arc::new(AtomicBool::new(false));
         let owned = Arc::new(Mutex::new(None));
