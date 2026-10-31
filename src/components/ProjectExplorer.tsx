@@ -8,7 +8,7 @@ interface ExplorerProps {
   onOpenFile: (path: string) => void | Promise<void>;
 }
 
-interface NodeProps extends ExplorerProps {
+interface NodeProps extends Pick<ExplorerProps, 'selectedPath' | 'onOpenFile'> {
   entry: FileEntry;
   depth: number;
 }
@@ -69,7 +69,7 @@ function EntryNode({ entry, depth, selectedPath, onOpenFile }: NodeProps) {
         <ul role="group" className="explorer-children">
           {children.length ? children.map((item) => (
             <EntryNode key={item.path} entry={item} depth={depth + 1}
-              entries={children} selectedPath={selectedPath} onOpenFile={onOpenFile} />
+              selectedPath={selectedPath} onOpenFile={onOpenFile} />
           )) : <li className="explorer-empty" role="none">Empty folder</li>}
         </ul>
       )}
@@ -82,7 +82,7 @@ export default function ProjectExplorer({ entries, selectedPath, onOpenFile }: E
   return (
     <ul className="file-tree" role="tree" aria-label="Workspace files">
       {entries.map((entry) => (
-        <EntryNode key={entry.path} entry={entry} entries={entries} depth={0}
+        <EntryNode key={entry.path} entry={entry} depth={0}
           selectedPath={selectedPath} onOpenFile={onOpenFile} />
       ))}
       {entries.length === 0 && <li className="explorer-empty" role="none">No files loaded</li>}
