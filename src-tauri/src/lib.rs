@@ -2,6 +2,7 @@ mod build_runner;
 mod content_build;
 mod game_bridge;
 mod game_control;
+mod game_window;
 mod local_ai;
 mod package_attestation;
 mod project_starter;
@@ -589,6 +590,19 @@ fn stop_game(state: State<AppState>) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Inspect only the real HWND(s) belonging to the game process launched
+/// by this Tauri session. Reports discovery only, never claims embed/playability.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+async fn get_game_window_probe(state: State<'_, AppState>) -> Result<game_window::GameWindowProbe, AppError> {
+    // Reap a dead child so an old PID is not reused as a discovery target.
+    refresh_game_process(&state);
+    let pid = state.game_process.lock().expect("game lock poisoned")
+        .as_ref().map(std::process::Child::id);
+    tauri::async_runtime::spawn_blocking(move || game_window::probe(pid))
+        .await.map_err(|e| AppError::SmokeFailed(format!("native window probe task failed: {e}")))
+}
+
 #[cfg(feature = "desktop")]
 #[tauri::command]
 fn get_game_status(state: State<AppState>) -> GameStatus {
@@ -862,6 +876,7 @@ pub fn run() {
             launch_game,
             stop_game,
             get_game_status,
+            get_game_window_probe,
             run_build,
             build_content_mod,
             cancel_build,
