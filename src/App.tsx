@@ -6,7 +6,7 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import './App.css';
 import { MockAIProvider } from './services/ai/provider';
-import { getGameStatus, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
+import { cancelBuild, getGameStatus, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
 import { useWorkspaceStore } from './store/useWorkspaceStore';
 import type { BuildDiagnostic, FileEntry, GameStatus } from './types/app';
 
@@ -31,6 +31,7 @@ function App() {
   const [aiResponse, setAiResponse] = useState('');
   const [diagnostics, setDiagnostics] = useState<BuildDiagnostic[]>([]);
   const [buildOutput, setBuildOutput] = useState('Build output will appear here.');
+  const [buildBusy, setBuildBusy] = useState(false);
   const [leftWidth, setLeftWidth] = useState(45);
   const [bottomHeight, setBottomHeight] = useState(35);
 
@@ -123,11 +124,38 @@ function App() {
   }
 
   async function onBuild() {
-    if (!workspaceRoot) return;
-    const result = await runBuild(workspaceRoot);
-    setBuildOutput(result.output);
-    setDiagnostics(result.diagnostics);
-    terminalInstanceRef.current?.writeln(result.success ? 'Build succeeded.' : 'Build failed.');
+    if (!workspaceRoot || buildBusy) return;
+    if (!window.confirm(
+      'Cargo may execute project build.rs scripts and procedural macros with your user privileges. ' +
+      'Only build projects you trust. Run cargo check for this workspace?',
+    )) return;
+    setBuildBusy(true);
+    setBuildOutput('Building trusted workspace… (limit: 180 seconds; logs limited to 1 MiB total)');
+    setDiagnostics([]);
+    try {
+      const result = await runBuild(workspaceRoot, true);
+      setBuildOutput(result.output);
+      setDiagnostics(result.diagnostics);
+      terminalInstanceRef.current?.writeln(
+        result.cancelled ? 'Build cancelled.' : result.timedOut ? 'Build timed out.' :
+        result.success ? 'Build succeeded.' : 'Build failed.',
+      );
+    } catch (error) {
+      setBuildOutput(`Build could not start or finish: ${String(error)}`);
+      terminalInstanceRef.current?.writeln(`Build error: ${String(error)}`);
+    } finally {
+      setBuildBusy(false);
+    }
+  }
+
+  async function onCancelBuild() {
+    try {
+      if (await cancelBuild()) {
+        terminalInstanceRef.current?.writeln('Build cancellation requested.');
+      }
+    } catch (error) {
+      terminalInstanceRef.current?.writeln(`Could not cancel build: ${String(error)}`);
+    }
   }
 
   async function onInspectHorizon() {
@@ -291,7 +319,12 @@ function App() {
         <section className="bottom-panel">
           <header>
             <h2>Build, Diagnostics, Console</h2>
-            <button onClick={() => void onBuild()}>Run Build</button>
+            <div className="button-row">
+              <button onClick={() => void onBuild()} disabled={!workspaceRoot || buildBusy}>
+                {buildBusy ? 'Building…' : 'Run Build'}
+              </button>
+              <button onClick={() => void onCancelBuild()} disabled={!buildBusy}>Cancel</button>
+            </div>
           </header>
           <div className="bottom-grid">
             <pre className="build-output">{buildOutput}</pre>
