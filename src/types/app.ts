@@ -78,3 +78,15 @@ export interface CreatedContentProject {
   template: 'official-horizon-content';
   gameLoadVerified: false;
 }
+
+/** Actual official content-mod build + static registry validation, not gameplay. */
+export interface ContentBuildResult {
+  succeeded: true;
+  artifactPath: string;
+  sha256: string;
+  modId: string;
+  version: string;
+  contentApi: '0.2';
+  staticCheckPassed: true;
+  inGameVerified: false;
+}
