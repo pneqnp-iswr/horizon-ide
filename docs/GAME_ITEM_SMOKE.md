@@ -13,6 +13,8 @@ This feature is a **real horizon-ctl protocol adapter**, not a mock UI result an
 
 ## Official static package check (mandatory)
 
+The **Verify .hmod (no game)** action exposes this check independently: it requires approval to execute a trusted local native checker, validates the artifact, and shows the returned attestation without starting Horizon. The in-game smoke reuses exactly the same gate before launch.
+
 Before a world starts, Horizon IDE launches only a user-selected, trusted `cargo-horizon-mod[.exe]` binary with `check PACKAGE --json` (no shell). The checker must return `ok: true`, `kind: "mod"`, a valid nonreserved mod ID, `api: "0.2"`, `capabilities` containing `registries`, and the **exact selected package SHA-256**. The test item namespace must equal the checked mod ID. Package SHA-256 is checked again after the static check and after the in-game observation. A different archive, wrong API, invalid namespace or failed checker stops the operation before game launch.
 
 This proves **official content-mod static acceptance**, not the presence of a named member inside the archive. `targetMemberVerified: false` and `packageItemOriginVerified: false` remain mandatory until the item JSON is independently inspected and attributed. The checker's filename is not a cryptographic identity verification; execute only a binary from your trusted installation.
