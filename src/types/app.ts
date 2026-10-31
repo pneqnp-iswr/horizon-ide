@@ -57,6 +57,7 @@ export interface GameItemSmokeReport {
   itemId: string;
   packageSha256: string;
   staticAttestation: ContentAttestation;
+  explicitResourcesSupplied: boolean;
   packageItemOriginVerified: false;
   gameVersion: string | null;
   launchAccepted: boolean;

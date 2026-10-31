@@ -76,6 +76,7 @@ vi.mock('./services/tauri/client', () => ({
       targetNamespaceMatches: true,
       targetMemberVerified: false,
     },
+    explicitResourcesSupplied: true,
     packageItemOriginVerified: false,
     gameVersion: 'test',
     launchAccepted: true,
@@ -199,6 +200,9 @@ describe('App', () => {
     fireEvent.change(screen.getByPlaceholderText('C:/Users/dev/.cargo/bin/cargo-horizon-mod.exe'), {
       target: { value: 'C:/Users/dev/.cargo/bin/cargo-horizon-mod.exe' },
     });
+    fireEvent.change(screen.getByPlaceholderText('C:/Horizon/prepared/26.3'), {
+      target: { value: 'C:/Horizon/prepared/26.3' },
+    });
     fireEvent.change(screen.getByPlaceholderText('C:/dev/mod/target/mod.hmod'), { target: { value: 'C:/dev/mod/target/mod.hmod' } });
     fireEvent.change(screen.getByPlaceholderText('ruby:ruby'), { target: { value: 'ruby:ruby' } });
     fireEvent.click(screen.getByText('Test item in disposable world'));
@@ -208,7 +212,7 @@ describe('App', () => {
       'C:/Horizon/horizon-client.exe',
       'C:/Users/dev/.cargo/bin/cargo-horizon-mod.exe',
       'C:/dev/mod/target/mod.hmod',
-      'ruby:ruby', true,
+      'ruby:ruby', 'C:/Horizon/prepared/26.3', true,
     );
   });
 

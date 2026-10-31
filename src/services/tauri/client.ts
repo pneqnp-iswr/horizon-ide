@@ -47,10 +47,11 @@ export async function runGameItemSmoke(
   checkerPath: string,
   packagePath: string,
   itemId: string,
+  resourcesPath: string | null,
   approved: boolean,
 ): Promise<GameItemSmokeReport> {
   return invoke<GameItemSmokeReport>('run_game_item_smoke', {
-    ctlPath, gamePath, checkerPath, packagePath, itemId, approved,
+    ctlPath, gamePath, checkerPath, packagePath, itemId, resourcesPath, approved,
   });
 }
 

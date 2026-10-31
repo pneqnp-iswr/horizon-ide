@@ -33,6 +33,7 @@ function App() {
   const [starterBusy, setStarterBusy] = useState(false);
   const [starterStatus, setStarterStatus] = useState('');
   const [packagePath, setPackagePath] = useState('');
+  const [preparedResourcesPath, setPreparedResourcesPath] = useState('');
   const [targetItemId, setTargetItemId] = useState('');
   const [smokeBusy, setSmokeBusy] = useState(false);
   const [smokeStatus, setSmokeStatus] = useState('No in-game item observation has been made.');
@@ -253,7 +254,7 @@ function App() {
     setSmokeStatus('Running isolated Horizon inventory smoke test…');
     try {
       await setWorkspaceRoot(workspaceRoot);
-      const report = await runGameItemSmoke(controlPath, gamePath, checkerPath, packagePath, targetItemId, true);
+      const report = await runGameItemSmoke(controlPath, gamePath, checkerPath, packagePath, targetItemId, preparedResourcesPath.trim() || null, true);
       setSmokeStatus(
         `Observed ${report.itemId}: ${report.before} → ${report.after}, slots: ${report.changedSlots.join(', ')}. ` +
         `Official static check passed for ${report.staticAttestation.modId}. ` +
@@ -398,7 +399,7 @@ function App() {
             <p role="status">{gameProbe}</p>
             <details className="smoke-tools">
               <summary>In-game content smoke test (experimental)</summary>
-              <p>Requires trusted Horizon game/control binaries and the official cargo-horizon-mod checker. Checks the .hmod SHA/API/namespace first, then runs a disposable test world and validates inventory slots. Item membership not yet proven.</p>
+              <p>Requires trusted Horizon game/control binaries and the official cargo-horizon-mod checker. Checks the .hmod SHA/API/namespace first, then runs a disposable test world and validates inventory slots. Item membership not yet proven. Optionally select a folder prepared by horizon-prepare; otherwise horizon-ctl will try launcher-installed resources.</p>
               <label>
                 horizon-ctl path
                 <input value={controlPath} onChange={(event) => setControlPath(event.target.value)} placeholder="C:/Horizon/horizon-ctl.exe" />
@@ -406,6 +407,11 @@ function App() {
               <label>
                 Official cargo-horizon-mod executable
                 <input value={checkerPath} onChange={(event) => setCheckerPath(event.target.value)} placeholder="C:/Users/dev/.cargo/bin/cargo-horizon-mod.exe" />
+              </label>
+              <label>
+                Prepared Resources (optional, owner-provided)
+                <input value={preparedResourcesPath} onChange={(event) => setPreparedResourcesPath(event.target.value)}
+                  placeholder="C:/Horizon/prepared/26.3" />
               </label>
               <label>
                 Built .hmod path (inside workspace)
