@@ -1,0 +1,28 @@
+name: Windows desktop compile
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  tauri-windows-check:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install pinned frontend dependencies
+        run: npm ci
+      - name: Build the real frontend assets for Tauri
+        run: npm run build
+      - name: Compile actual Windows desktop commands (desktop feature enabled)
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked --features desktop
+      - name: Run desktop-feature Rust unit tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --features desktop
