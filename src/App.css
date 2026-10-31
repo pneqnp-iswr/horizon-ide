@@ -72,8 +72,10 @@ button:disabled { opacity: .6; cursor: default; }
 .vertical { width: 6px; cursor: col-resize; }
 .horizontal { height: 6px; cursor: row-resize; }
 
-.bottom-panel { background: var(--bg-soft); display: grid; grid-template-rows: auto 1fr; min-height: 0; }
+.bottom-panel { background: var(--bg-soft); display: grid; grid-template-rows: auto auto minmax(0, 1fr); min-height: 0; }
 .bottom-panel header { display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid var(--border); }
+.content-build-status { margin: 0; padding: 5px 10px; font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.bottom-panel .button-row { flex-wrap: wrap; }
 .bottom-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; min-height: 0; }
 .build-output, .diagnostics, .terminal { margin: 0; border-right: 1px solid var(--border); padding: 10px; overflow: auto; font-size: 12px; }
 .diagnostics p { margin: 0 0 6px; }
