@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { BuildResult, ContentAttestation, ContentBuildResult, CreatedContentProject, DocumentSnapshot, FileEntry, GameItemSmokeReport, GameStatus, HorizonInstallationReport } from '../../types/app';
+import type { BuildResult, ContentAttestation, ContentBuildResult, CreatedContentProject, DocumentSnapshot, FileEntry, GameItemSmokeReport, GameStatus, HorizonInstallationReport, LocalAiAnswer, LocalAiModels } from '../../types/app';
 
 export async function setWorkspaceRoot(path: string): Promise<void> {
   await invoke('set_workspace_root', { path });
@@ -80,4 +80,22 @@ export async function createContentStarter(
 
 export async function buildContentMod(toolPath: string, workspacePath: string, approved: boolean): Promise<ContentBuildResult> {
   return invoke<ContentBuildResult>('build_content_mod', { toolPath, workspacePath, approved });
+}
+
+/** Native loopback-only inference (LM Studio or Ollama), never hosted by IDE. */
+export async function askLocalAi(
+  provider: 'lmstudio' | 'ollama',
+  model: string,
+  prompt: string,
+  document: string | null,
+  approved: boolean,
+): Promise<LocalAiAnswer> {
+  return invoke<LocalAiAnswer>('ask_local_ai', {
+    provider, model, prompt, document, approved,
+  });
+}
+
+/** Discovers IDs from the selected loopback provider, without editor content. */
+export async function listLocalAiModels(provider: 'lmstudio' | 'ollama'): Promise<LocalAiModels> {
+  return invoke<LocalAiModels>('list_local_ai_models', { provider });
 }
