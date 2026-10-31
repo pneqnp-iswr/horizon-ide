@@ -38,6 +38,7 @@ function App() {
   const [diagnostics, setDiagnostics] = useState<BuildDiagnostic[]>([]);
   const [buildOutput, setBuildOutput] = useState('Build output will appear here.');
   const [buildBusy, setBuildBusy] = useState(false);
+  const [explorerRevision, setExplorerRevision] = useState(0);
   const [leftWidth, setLeftWidth] = useState(45);
   const [bottomHeight, setBottomHeight] = useState(35);
 
@@ -91,6 +92,7 @@ function App() {
     await setWorkspaceRoot(workspaceRoot);
     const entries = await listDirectory(workspaceRoot);
     setFiles(entries);
+    setExplorerRevision((revision) => revision + 1);
   }
 
   async function openFile(path: string) {
@@ -288,7 +290,7 @@ function App() {
           </select>
         </label>
         <h2>Project Explorer</h2>
-        <ProjectExplorer key={workspaceRoot} entries={files}
+        <ProjectExplorer key={`${workspaceRoot}:${explorerRevision}`} entries={files}
           selectedPath={selectedFile} onOpenFile={openFile} />
         <h2>AI Assistant ({mockProvider.label})</h2>
         <textarea value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} rows={4} />
