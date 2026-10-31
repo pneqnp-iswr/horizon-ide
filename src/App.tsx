@@ -6,7 +6,7 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import './App.css';
 import { MockAIProvider } from './services/ai/provider';
-import { askLocalAi, buildContentMod, cancelBuild, checkHmodPackage, createContentStarter, getGameStatus, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
+import { askLocalAi, listLocalAiModels, buildContentMod, cancelBuild, checkHmodPackage, createContentStarter, getGameStatus, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
 import { useWorkspaceStore } from './store/useWorkspaceStore';
 import ProjectExplorer from './components/ProjectExplorer';
 import type { BuildDiagnostic, FileEntry, GameStatus } from './types/app';
@@ -40,6 +40,9 @@ function App() {
   const [probing, setProbing] = useState(false);
   const [aiBackend, setAiBackend] = useState<'lmstudio' | 'ollama' | 'mock'>('lmstudio');
   const [aiModel, setAiModel] = useState('');
+  const [aiModels, setAiModels] = useState<string[]>([]);
+  const [aiModelsBusy, setAiModelsBusy] = useState(false);
+  const [aiModelNotice, setAiModelNotice] = useState('Discover models after starting a local server.');
   const [aiIncludeDocument, setAiIncludeDocument] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('Create a new mob with custom AI behavior');
@@ -326,6 +329,23 @@ function App() {
     }
   }
 
+  async function onDiscoverLocalModels() {
+    if (aiBackend === 'mock' || aiModelsBusy) return;
+    setAiModelsBusy(true);
+    setAiModelNotice('Checking the selected local server for available models…');
+    try {
+      const result = await listLocalAiModels(aiBackend);
+      setAiModels(result.models);
+      setAiModel((selected) => result.models.includes(selected) ? selected : result.models[0]);
+      setAiModelNotice(`Found ${result.models.length} available local model(s).`);
+    } catch (error) {
+      setAiModels([]);
+      setAiModelNotice(`Cannot list local models: ${String(error)}`);
+    } finally {
+      setAiModelsBusy(false);
+    }
+  }
+
   async function onAIRequest() {
     if (aiBusy || !aiPrompt.trim()) return;
     if (aiBackend === 'mock') {
@@ -477,7 +497,12 @@ function App() {
         <h2>Local AI Coding Assistant</h2>
         <label>
           Inference mode
-          <select value={aiBackend} onChange={(event) => setAiBackend(event.target.value as 'lmstudio' | 'ollama' | 'mock')}>
+          <select value={aiBackend} onChange={(event) => {
+            setAiBackend(event.target.value as 'lmstudio' | 'ollama' | 'mock');
+            setAiModel('');
+            setAiModels([]);
+            setAiModelNotice('Discover models after starting a local server.');
+          }}>
             <option value="lmstudio">LM Studio · localhost:1234</option>
             <option value="ollama">Ollama · localhost:11434</option>
             <option value="mock">Demo only (mock, no real AI)</option>
@@ -489,6 +514,23 @@ function App() {
             <input value={aiModel} onChange={(event) => setAiModel(event.target.value)}
               placeholder="Your local model identifier" />
           </label>
+        )}
+        {aiBackend !== 'mock' && (
+          <>
+            <button type="button" disabled={aiModelsBusy || aiBusy} onClick={() => void onDiscoverLocalModels()}>
+              {aiModelsBusy ? 'Discovering models…' : 'Discover local models'}
+            </button>
+            {aiModels.length > 0 && (
+              <label>
+                Available local models
+                <select value={aiModels.includes(aiModel) ? aiModel : ''} onChange={(event) => setAiModel(event.target.value)}>
+                  <option value="" disabled>Choose a discovered model</option>
+                  {aiModels.map((model) => <option key={model} value={model}>{model}</option>)}
+                </select>
+              </label>
+            )}
+            <p className="local-ai-notice" role="status">{aiModelNotice}</p>
+          </>
         )}
         <label className="local-ai-consent">
           <input type="checkbox" checked={aiIncludeDocument}
