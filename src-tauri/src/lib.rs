@@ -1,6 +1,7 @@
 mod build_runner;
 mod game_bridge;
 mod game_control;
+mod package_attestation;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -679,6 +680,7 @@ fn cancel_build(state: State<AppState>) -> bool {
 async fn run_game_item_smoke(
     ctl_path: String,
     game_path: String,
+    checker_path: String,
     package_path: String,
     item_id: String,
     approved: bool,
@@ -689,6 +691,7 @@ async fn run_game_item_smoke(
         executable_path: game_path, args: vec![],
     })?;
     let ctl = PathBuf::from(ctl_path).canonicalize()?;
+    let checker = PathBuf::from(checker_path).canonicalize()?;
     let root = state.workspace_root.lock().expect("workspace root lock poisoned")
         .clone().ok_or(AppError::MissingWorkspaceRoot)?;
     let package = ensure_within_workspace(&root, Path::new(&package_path))?;
@@ -707,7 +710,7 @@ async fn run_game_item_smoke(
         // caller explicitly approved this disposable session.
         probe_horizon_installation(&game)
             .map_err(|e| format!("Launch API: {e}"))?;
-        game_control::smoke(&ctl, &game, &package, &item_id)
+        game_control::smoke(&ctl, &game, &checker, &package, &item_id)
             .map_err(|e| e.to_string())
     }).await;
     state.smoke_running.store(false, Ordering::Release);
