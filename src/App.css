@@ -74,7 +74,12 @@ button:disabled { opacity: .6; cursor: default; }
 .panel input { width: 100%; background: var(--bg-soft); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px; }
 .button-row { display: flex; gap: 6px; }
 .current-file { margin: 0; font-size: 12px; color: var(--muted); }
-.editor-panel { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); }
+.editor-panel { display: flex; flex-direction: column; min-height: 0; }
+.editor-surface { flex: 1; min-height: 0; }
+.ai-review-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 7px; border: 1px solid var(--border); border-radius: 6px; }
+.ai-review-toolbar span { font-size: 11px; color: var(--muted); flex: 1 1 100%; }
+.ai-review-toolbar button, .undo-ai-edit { padding: 5px 7px; font-size: 11px; }
+.ai-edit-notice { font-size: 11px; line-height: 1.4; color: var(--muted); margin: 0; overflow-wrap: anywhere; }
 .file-notice { margin: 0; min-height: 1.2em; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
 
 .splitter { background: var(--border); }

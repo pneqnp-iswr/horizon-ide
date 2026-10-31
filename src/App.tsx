@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
-import Editor from '@monaco-editor/react';
+import Editor, { DiffEditor } from '@monaco-editor/react';
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import './App.css';
 import { MockAIProvider } from './services/ai/provider';
+import { isProposalCurrent, parseLocalAiEditProposal } from './services/ai/editProposal';
+import type { ReviewedEditProposal } from './services/ai/editProposal';
 import { askLocalAi, listLocalAiModels, buildContentMod, cancelBuild, checkHmodPackage, createContentStarter, getGameStatus, getGameWindowProbe, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
 import { useWorkspaceStore } from './store/useWorkspaceStore';
 import ProjectExplorer from './components/ProjectExplorer';
@@ -49,6 +51,10 @@ function App() {
   const [aiBusy, setAiBusy] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('Create a new mob with custom AI behavior');
   const [aiResponse, setAiResponse] = useState('');
+  const [pendingAiEdit, setPendingAiEdit] = useState<ReviewedEditProposal | null>(null);
+  const [aiDiffVisible, setAiDiffVisible] = useState(false);
+  const [aiEditNotice, setAiEditNotice] = useState('');
+  const [previousAiEdit, setPreviousAiEdit] = useState<ReviewedEditProposal | null>(null);
   const [diagnostics, setDiagnostics] = useState<BuildDiagnostic[]>([]);
   const [buildOutput, setBuildOutput] = useState('Build output will appear here.');
   const [buildBusy, setBuildBusy] = useState(false);
@@ -57,6 +63,19 @@ function App() {
   const [bottomHeight, setBottomHeight] = useState(35);
 
   const { theme, workspaceRoot, setTheme, setWorkspaceRoot: persistWorkspaceRoot } = useWorkspaceStore();
+  const currentDocumentRef = useRef({ path: selectedFile, contents: fileContents, revision: documentRevision });
+  currentDocumentRef.current = { path: selectedFile, contents: fileContents, revision: documentRevision };
+  const aiProposalCurrent = pendingAiEdit !== null && isProposalCurrent(
+    pendingAiEdit, selectedFile, fileContents, documentRevision,
+  );
+  const aiUndoAvailable = previousAiEdit !== null
+    && selectedFile === previousAiEdit.path
+    && fileContents === previousAiEdit.replacement
+    && documentRevision === previousAiEdit.baseRevision;
+  const editorLanguage = selectedFile.endsWith('.json') ? 'json'
+    : selectedFile.endsWith('.ts') || selectedFile.endsWith('.tsx') ? 'typescript'
+    : selectedFile.endsWith('.js') || selectedFile.endsWith('.jsx') ? 'javascript'
+    : selectedFile.endsWith('.toml') ? 'ini' : 'rust';
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -120,6 +139,9 @@ function App() {
       setSavedContents(data.contents);
       setDocumentRevision(data.revision);
       setSaveNotice('');
+      setPendingAiEdit(null);
+      setAiDiffVisible(false);
+      setPreviousAiEdit(null);
     } catch (error) {
       setSaveNotice(`Open failed: ${String(error)}`);
     }
@@ -135,6 +157,7 @@ function App() {
       const saved = await saveTextFile(path, contents, expectedRevision);
       setDocumentRevision(saved.revision);
       setSavedContents(contents);
+      setPreviousAiEdit(null);
       setSaveNotice('Saved to disk');
       terminalInstanceRef.current?.writeln(`Saved ${path} [${saved.revision.slice(0,12)}]`);
     } catch (error) {
@@ -398,6 +421,86 @@ function App() {
     }
   }
 
+  async function onProposeFileEdit() {
+    if (aiBackend === 'mock' || aiBusy) {
+      setAiEditNotice('Real local inference is required to propose a reviewable edit.');
+      return;
+    }
+    if (!selectedFile || !documentRevision || !aiIncludeDocument) {
+      setAiEditNotice('Open a revisioned file and opt in to sharing its contents with the local model.');
+      return;
+    }
+    if (!aiModel.trim()) {
+      setAiEditNotice('Choose a locally loaded model first.');
+      return;
+    }
+    const snapshot = { path: selectedFile, contents: fileContents, revision: documentRevision };
+    if (new TextEncoder().encode(snapshot.contents).length > 64 * 1024) {
+      setAiEditNotice('Current editor file exceeds the 64 KiB local AI edit limit.');
+      return;
+    }
+    if (!window.confirm(
+      'Send the current file contents and its path to your LOCAL model for an edit proposal? ' +
+      'The IDE will display a diff first. No file will be written or command executed automatically.',
+    )) return;
+    setAiBusy(true);
+    setAiEditNotice('Requesting a structured, reviewable edit from the local model…');
+    setPendingAiEdit(null);
+    setAiDiffVisible(false);
+    try {
+      const instruction = [
+        'Propose a SINGLE-FILE replacement for this Horizon project.',
+        'Developer request: ' + aiPrompt,
+        'Return ONLY one JSON object with exactly two string properties:',
+        JSON.stringify({ path: snapshot.path, newContent: '<complete replacement UTF-8 file>' }),
+        'Do not add code fences, commands, explanations, or other keys.',
+        'Preserve unrelated contents and propose no changes to any other path.',
+      ].join('\n');
+      const reply = await askLocalAi(aiBackend, aiModel.trim(), instruction, snapshot.contents, true);
+      const proposal = parseLocalAiEditProposal(
+        reply.content, snapshot.path, snapshot.contents, snapshot.revision, reply.model,
+      );
+      const latest = currentDocumentRef.current;
+      if (!isProposalCurrent(proposal, latest.path, latest.contents, latest.revision)) {
+        throw new Error('Editor changed while AI was generating. No stale proposal was accepted.');
+      }
+      setPendingAiEdit(proposal);
+      setAiDiffVisible(true);
+      setAiEditNotice('Review the Monaco diff. Apply to editor only after inspecting the exact changes.');
+    } catch (error) {
+      setAiEditNotice(`Proposal refused: ${String(error)}`);
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
+  function onAcceptAiEdit() {
+    if (!pendingAiEdit) return;
+    if (!isProposalCurrent(pendingAiEdit, selectedFile, fileContents, documentRevision)) {
+      setAiEditNotice('The editor changed since the proposal. Discard and regenerate; nothing was applied.');
+      return;
+    }
+    if (!window.confirm('Apply this reviewed AI edit to the editor BUFFER only? Saving to disk is a separate action.')) return;
+    setPreviousAiEdit(pendingAiEdit);
+    setFileContents(pendingAiEdit.replacement);
+    setPendingAiEdit(null);
+    setAiDiffVisible(false);
+    setAiEditNotice('AI proposal applied to the editor buffer. Review, Undo, or press Ctrl+S to save.');
+  }
+
+  function onDiscardAiEdit() {
+    setPendingAiEdit(null);
+    setAiDiffVisible(false);
+    setAiEditNotice('AI proposal discarded; original editor contents were preserved.');
+  }
+
+  function onUndoAiEdit() {
+    if (!previousAiEdit || !aiUndoAvailable) return;
+    setFileContents(previousAiEdit.original);
+    setPreviousAiEdit(null);
+    setAiEditNotice('Previous AI buffer edit undone. No files were written.');
+  }
+
   // Editor shortcuts operate inside the actual Tauri workspace, never by
   // silently executing source in a browser. Native process actions retain
   // the same explicit confirmation as their visible buttons.
@@ -560,6 +663,11 @@ function App() {
         <button onClick={() => void onAIRequest()} disabled={aiBusy || !aiPrompt.trim()}>
           {aiBusy ? 'Asking local model…' : 'Ask Local AI'}
         </button>
+        <button type="button" onClick={() => void onProposeFileEdit()}
+          disabled={aiBusy || aiBackend === 'mock' || !selectedFile || !aiIncludeDocument || !aiModel.trim()}>
+          {aiBusy ? 'Generating proposal…' : 'Propose file edit (review diff)'}
+        </button>
+        <p className="ai-edit-notice" role="status" aria-live="polite">{aiEditNotice}</p>
         <pre className="ai-output" role="status" aria-live="polite">
           {aiResponse || 'Local model needed. Start the LM Studio or Ollama API server; suggestions are read-only.'}
         </pre>
@@ -657,14 +765,38 @@ function App() {
               {selectedFile && fileContents !== savedContents ? ' • Unsaved changes' : ''}
             </p>
             <p className="file-notice" role="status" aria-live="polite">{saveNotice || "\u00a0"}</p>
-            <Editor
-              height="100%"
-              theme="vs-dark"
-              value={fileContents}
-              language="rust"
-              onChange={(value) => setFileContents(value ?? '')}
-              options={{ minimap: { enabled: false }, fontSize: 13 }}
-            />
+            {pendingAiEdit && (
+              <div className="ai-review-toolbar" role="group" aria-label="Local AI edit review">
+                <span>{aiProposalCurrent ? 'AI edit ready to review' : 'AI edit is stale — do not apply'}</span>
+                <button type="button" onClick={() => setAiDiffVisible((open) => !open)}>
+                  {aiDiffVisible ? 'Show code editor' : 'Show AI diff'}
+                </button>
+                <button type="button" disabled={!aiProposalCurrent} onClick={onAcceptAiEdit}>Apply to editor</button>
+                <button type="button" onClick={onDiscardAiEdit}>Discard proposal</button>
+              </div>
+            )}
+            {aiUndoAvailable && <button type="button" className="undo-ai-edit" onClick={onUndoAiEdit}>Undo AI buffer edit</button>}
+            <div className="editor-surface">
+            {pendingAiEdit && aiDiffVisible ? (
+              <DiffEditor
+                height="100%"
+                theme="vs-dark"
+                language={editorLanguage}
+                original={pendingAiEdit.original}
+                modified={pendingAiEdit.replacement}
+                options={{ readOnly: true, renderSideBySide: true, minimap: { enabled: false }, fontSize: 13 }}
+              />
+            ) : (
+              <Editor
+                height="100%"
+                theme="vs-dark"
+                value={fileContents}
+                language={editorLanguage}
+                onChange={(value) => setFileContents(value ?? '')}
+                options={{ minimap: { enabled: false }, fontSize: 13 }}
+              />
+            )}
+            </div>
           </article>
         </section>
         <div className="splitter horizontal" onMouseDown={attachVerticalResize} />
