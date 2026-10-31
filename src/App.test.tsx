@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
-import { askLocalAi, buildContentMod, cancelBuild, checkHmodPackage, createContentStarter, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, stopGame } from './services/tauri/client';
+import { askLocalAi, buildContentMod, cancelBuild, checkHmodPackage, createContentStarter, launchGame, listDirectory, listLocalAiModels, readTextFile, runBuild, runGameItemSmoke, saveTextFile, stopGame } from './services/tauri/client';
 
 vi.mock('@monaco-editor/react', () => ({
   default: ({ value, onChange }: { value: string; onChange: (text: string) => void }) => (
@@ -37,6 +37,10 @@ vi.mock('./services/tauri/client', () => ({
   launchGame: vi.fn().mockResolvedValue('running'),
   listDirectory: vi.fn().mockResolvedValue([]),
   readTextFile: vi.fn().mockResolvedValue({ contents: '', revision: 'a'.repeat(64) }),
+  listLocalAiModels: vi.fn().mockResolvedValue({
+    provider: 'lmstudio',
+    models: ['huihui-ai/Qwen3-27B', 'small-model'],
+  }),
   askLocalAi: vi.fn().mockResolvedValue({
     provider: 'lmstudio',
     model: 'local-model',
@@ -118,6 +122,21 @@ afterEach(() => {
 });
 
 describe('App', () => {
+
+  it('discovers real local model identifiers without sending editor code', async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Discover local models' }));
+    expect(await screen.findByText(/Found 2 available local model/)).toBeTruthy();
+    expect(vi.mocked(listLocalAiModels)).toHaveBeenCalledWith('lmstudio');
+    expect(vi.mocked(askLocalAi)).not.toHaveBeenCalled();
+    expect((screen.getByPlaceholderText('Your local model identifier') as HTMLInputElement).value)
+      .toBe('huihui-ai/Qwen3-27B');
+    fireEvent.change(screen.getByLabelText('Available local models'), {
+      target: { value: 'small-model' },
+    });
+    expect((screen.getByPlaceholderText('Your local model identifier') as HTMLInputElement).value)
+      .toBe('small-model');
+  });
 
   it('does not send a local AI request without explicit user consent', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false);
