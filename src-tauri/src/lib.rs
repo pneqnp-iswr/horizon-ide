@@ -1,4 +1,5 @@
 mod build_runner;
+mod content_build;
 mod game_bridge;
 mod game_control;
 mod package_attestation;
@@ -667,6 +668,35 @@ async fn run_build(
     })
 }
 
+/// Build real data-only Horizon content with the official tool, never via
+/// Cargo check. Uses the same build lock and cancellation UI as Rust builds.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+async fn build_content_mod(
+    tool_path: String,
+    workspace_path: String,
+    approved: bool,
+    state: State<'_, AppState>,
+) -> Result<content_build::ContentBuildResult, AppError> {
+    if !approved { return Err(AppError::BuildApprovalRequired); }
+    let root = state.workspace_root.lock().expect("workspace root lock poisoned")
+        .clone().ok_or(AppError::MissingWorkspaceRoot)?;
+    let workspace = ensure_within_workspace(&root, Path::new(&workspace_path))?;
+    if workspace != root { return Err(AppError::PathOutsideWorkspace); }
+    if state.build_running.swap(true, Ordering::AcqRel) {
+        return Err(AppError::BuildAlreadyRunning);
+    }
+    state.build_cancel.store(false, Ordering::Release);
+    let cancel = state.build_cancel.clone();
+    let process = state.build_process.clone();
+    let task = tauri::async_runtime::spawn_blocking(move || {
+        content_build::build(Path::new(&tool_path), &workspace, cancel, process)
+            .map_err(AppError::SmokeFailed)
+    }).await;
+    state.build_running.store(false, Ordering::Release);
+    task.map_err(|e| AppError::SmokeFailed(e.to_string()))?
+}
+
 #[cfg(feature = "desktop")]
 #[tauri::command]
 fn cancel_build(state: State<AppState>) -> bool {
@@ -758,6 +788,7 @@ pub fn run() {
             stop_game,
             get_game_status,
             run_build,
+            build_content_mod,
             cancel_build,
             check_hmod_package,
             run_game_item_smoke
