@@ -252,6 +252,9 @@ pub fn smoke(ctl: &Path, game: &Path, package: &Path, item: &str) -> Result<Item
         }
         let (after, changed_slots) = observed.ok_or_else(||
             SmokeError("game did not confirm an exact item increase in a real inventory slot".into()))?;
+        if file_digest(package)? != digest {
+            return Err(SmokeError("the .hmod was modified during the test; evidence invalid".into()));
+        }
         Ok(ItemSmokeReport {
             schema: "horizon-ide.item-smoke/1",
             level: "inventory-observed",
@@ -276,15 +279,13 @@ pub fn smoke(ctl: &Path, game: &Path, package: &Path, item: &str) -> Result<Item
     // Quit regardless of assertion success. Never kill an arbitrary PID
     // reported by the unversioned control protocol.
     let quit = call(ctl, &socket, &["quit"], Duration::from_secs(25));
-    if quit.is_ok() {
-        let _ = fs::remove_dir_all(&dir);
-    }
+    let cleaned = quit.is_ok() && fs::remove_dir_all(&dir).is_ok();
     match result {
         Ok(mut report) => {
-            report.session_cleaned = quit.is_ok();
-            if quit.is_err() {
+            report.session_cleaned = cleaned;
+            if !cleaned {
                 report.notes.push(format!(
-                    "Game quit could not be confirmed. Manual inspection required at {}",
+                    "Session cleanup was not confirmed. Manual inspection required at {}",
                     dir.display()
                 ));
             }
