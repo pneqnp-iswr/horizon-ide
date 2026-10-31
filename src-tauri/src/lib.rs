@@ -1,4 +1,6 @@
 mod build_runner;
+mod game_bridge;
+mod game_control;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -33,6 +35,12 @@ enum AppError {
     BuildAlreadyRunning,
     #[error("workspace has no Cargo.toml")]
     NotCargoWorkspace,
+    #[error("isolated game smoke is already running")]
+    SmokeAlreadyRunning,
+    #[error("game smoke is refused while an external Horizon process is owned")]
+    GameProcessActive,
+    #[error("game smoke failed: {0}")]
+    SmokeFailed(String),
     #[error("invalid launch request")]
     InvalidLaunchRequest,
     #[error("Horizon is already running in this IDE session")]
@@ -59,6 +67,7 @@ struct AppState {
     workspace_root: Mutex<Option<PathBuf>>,
     document_write_lock: Mutex<()>,
     build_running: AtomicBool,
+    smoke_running: AtomicBool,
     build_cancel: Arc<AtomicBool>,
     build_process: Arc<Mutex<Option<Child>>>,
     game_status: Mutex<GameStatus>,
@@ -607,6 +616,50 @@ fn cancel_build(state: State<AppState>) -> bool {
     true
 }
 
+/// Runs against a fresh disposable world only. No player account or
+/// personal saves are intentionally used. The result is inventory-observed
+/// evidence, NOT a verified package-to-item attribution.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+async fn run_game_item_smoke(
+    ctl_path: String,
+    game_path: String,
+    package_path: String,
+    item_id: String,
+    approved: bool,
+    state: State<'_, AppState>,
+) -> Result<game_control::ItemSmokeReport, AppError> {
+    if !approved { return Err(AppError::BuildApprovalRequired); }
+    let game = validated_horizon_executable(&LaunchRequest {
+        executable_path: game_path, args: vec![],
+    })?;
+    let ctl = PathBuf::from(ctl_path).canonicalize()?;
+    let root = state.workspace_root.lock().expect("workspace root lock poisoned")
+        .clone().ok_or(AppError::MissingWorkspaceRoot)?;
+    let package = ensure_within_workspace(&root, Path::new(&package_path))?;
+    {
+        let mut process = state.game_process.lock().expect("game lock poisoned");
+        if let Some(child) = process.as_mut() {
+            if child.try_wait()?.is_none() { return Err(AppError::GameProcessActive); }
+            *process = None;
+        }
+    }
+    if state.smoke_running.swap(true, Ordering::AcqRel) {
+        return Err(AppError::SmokeAlreadyRunning);
+    }
+    let task = tauri::async_runtime::spawn_blocking(move || {
+        // The native executable can read user files with their OS privileges;
+        // caller explicitly approved this disposable session.
+        probe_horizon_installation(&game)
+            .map_err(|e| format!("Launch API: {e}"))?;
+        game_control::smoke(&ctl, &game, &package, &item_id)
+            .map_err(|e| e.to_string())
+    }).await;
+    state.smoke_running.store(false, Ordering::Release);
+    task.map_err(|error| AppError::SmokeFailed(error.to_string()))?
+        .map_err(AppError::SmokeFailed)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 #[cfg(feature = "desktop")]
 pub fn run() {
@@ -622,7 +675,8 @@ pub fn run() {
             stop_game,
             get_game_status,
             run_build,
-            cancel_build
+            cancel_build,
+            run_game_item_smoke
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
