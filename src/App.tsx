@@ -6,7 +6,7 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import './App.css';
 import { MockAIProvider } from './services/ai/provider';
-import { cancelBuild, getGameStatus, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
+import { cancelBuild, checkHmodPackage, getGameStatus, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
 import { useWorkspaceStore } from './store/useWorkspaceStore';
 import type { BuildDiagnostic, FileEntry, GameStatus } from './types/app';
 
@@ -178,6 +178,23 @@ function App() {
     }
   }
 
+  async function onVerifyPackage() {
+    if (!checkerPath || !packagePath || !targetItemId || !workspaceRoot || smokeBusy) return;
+    if (!window.confirm('Run the trusted official cargo-horizon-mod checker on this workspace package? It executes a selected native binary but does not launch Minecraft.')) return;
+    setSmokeBusy(true);
+    setSmokeStatus('Running official Horizon content-mod static check…');
+    try {
+      await setWorkspaceRoot(workspaceRoot);
+      const result = await checkHmodPackage(checkerPath, packagePath, targetItemId, true);
+      setSmokeStatus(`Static check passed: ${result.modId} ${result.version}, API ${result.contentApi}, SHA ${result.sha256.slice(0, 12)}…; exact item file NOT verified.`);
+      setBuildOutput(JSON.stringify(result, null, 2));
+    } catch (error) {
+      setSmokeStatus(`Static validation failed: ${String(error)}`);
+    } finally {
+      setSmokeBusy(false);
+    }
+  }
+
   async function onGameItemSmoke() {
     if (!gamePath || !controlPath || !checkerPath || !packagePath || !targetItemId || !workspaceRoot || smokeBusy) return;
     if (!window.confirm(
@@ -343,6 +360,9 @@ function App() {
                 Namespaced test item ID
                 <input value={targetItemId} onChange={(event) => setTargetItemId(event.target.value)} placeholder="ruby:ruby" />
               </label>
+              <button onClick={() => void onVerifyPackage()} disabled={
+                smokeBusy || !workspaceRoot || !checkerPath || !packagePath || !targetItemId
+              }>Verify .hmod (no game)</button>
               <button onClick={() => void onGameItemSmoke()} disabled={
                 smokeBusy || status === 'running' || status === 'launching' ||
                 !workspaceRoot || !controlPath || !checkerPath || !gamePath || !packagePath || !targetItemId
