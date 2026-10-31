@@ -217,10 +217,12 @@ pub fn smoke(ctl: &Path, game: &Path, package: &Path, item: &str) -> Result<Item
             if quit.is_ok() {
                 let _ = fs::remove_dir_all(&dir);
             }
-            return Err(SmokeError(format!(
-                "launch failed: {error}; temporary session {}",
-                if quit.is_ok() { "was closed" } else { "may still be active; retained at" }
-            ) + if quit.is_ok() { String::new() } else { format!(" {}", dir.display()) }.as_str()));
+            let message = if quit.is_ok() {
+                format!("launch failed: {error}; temporary session closed")
+            } else {
+                format!("launch failed: {error}; session may remain active at {}", dir.display())
+            };
+            return Err(SmokeError(message));
         }
     };
 
