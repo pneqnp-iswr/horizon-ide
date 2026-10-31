@@ -19,6 +19,10 @@ function App() {
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [selectedFile, setSelectedFile] = useState('');
   const [fileContents, setFileContents] = useState('');
+  const [savedContents, setSavedContents] = useState('');
+  const [documentRevision, setDocumentRevision] = useState('');
+  const [saveNotice, setSaveNotice] = useState('');
+  const [savingFile, setSavingFile] = useState(false);
   const [status, setStatus] = useState<GameStatus>('disconnected');
   const [gamePath, setGamePath] = useState('');
   const [gameProbe, setGameProbe] = useState('Select your installed horizon-client and check its Launch API.');
@@ -83,15 +87,39 @@ function App() {
   }
 
   async function openFile(path: string) {
-    const data = await readTextFile(path);
-    setSelectedFile(path);
-    setFileContents(data);
+    if (savingFile) return;
+    if (selectedFile && fileContents !== savedContents &&
+        !window.confirm('Discard unsaved edits and open another file?')) return;
+    try {
+      const data = await readTextFile(path);
+      setSelectedFile(path);
+      setFileContents(data.contents);
+      setSavedContents(data.contents);
+      setDocumentRevision(data.revision);
+      setSaveNotice('');
+    } catch (error) {
+      setSaveNotice(`Open failed: ${String(error)}`);
+    }
   }
 
   async function saveCurrentFile() {
-    if (!selectedFile) return;
-    await saveTextFile(selectedFile, fileContents);
-    terminalInstanceRef.current?.writeln(`Saved ${selectedFile}`);
+    if (!selectedFile || !documentRevision || savingFile) return;
+    const path = selectedFile;
+    const contents = fileContents;
+    const expectedRevision = documentRevision;
+    setSavingFile(true);
+    try {
+      const saved = await saveTextFile(path, contents, expectedRevision);
+      setDocumentRevision(saved.revision);
+      setSavedContents(contents);
+      setSaveNotice('Saved to disk');
+      terminalInstanceRef.current?.writeln(`Saved ${path} [${saved.revision.slice(0,12)}]`);
+    } catch (error) {
+      setSaveNotice(`Save refused: ${String(error)}. The editor contents remain available.`);
+      terminalInstanceRef.current?.writeln(`Save failed: ${String(error)}`);
+    } finally {
+      setSavingFile(false);
+    }
   }
 
   async function onBuild() {
@@ -240,9 +268,15 @@ function App() {
           <article className="panel editor-panel" style={{ width: `${100 - leftWidth}%` }}>
             <header>
               <h2>Code Editor</h2>
-              <button onClick={() => void saveCurrentFile()} disabled={!selectedFile}>Save</button>
+              <button onClick={() => void saveCurrentFile()} disabled={!selectedFile || !documentRevision || savingFile}>
+                {savingFile ? 'Saving…' : 'Save'}
+              </button>
             </header>
-            <p className="current-file">{selectedFile || 'Open a file from explorer'}</p>
+            <p className="current-file">
+              {selectedFile || 'Open a file from explorer'}
+              {selectedFile && fileContents !== savedContents ? ' • Unsaved changes' : ''}
+            </p>
+            <p className="file-notice" role="status" aria-live="polite">{saveNotice || "\u00a0"}</p>
             <Editor
               height="100%"
               theme="vs-dark"

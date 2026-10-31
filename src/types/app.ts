@@ -27,3 +27,9 @@ export interface HorizonInstallationReport {
   gameLoadVerified: false;
   embeddedViewportVerified: false;
 }
+
+/** Exact content-addressed revision used for optimistic conflict detection. */
+export interface DocumentSnapshot {
+  contents: string;
+  revision: string;
+}

@@ -1,9 +1,12 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
+import { listDirectory, readTextFile, saveTextFile } from './services/tauri/client';
 
 vi.mock('@monaco-editor/react', () => ({
-  default: () => <div>Monaco Editor Mock</div>,
+  default: ({ value, onChange }: { value: string; onChange: (text: string) => void }) => (
+    <textarea aria-label="Monaco mock document" value={value} onChange={(event) => onChange(event.target.value)} />
+  ),
 }));
 
 vi.mock('@xterm/xterm', () => ({
@@ -33,9 +36,9 @@ vi.mock('./services/tauri/client', () => ({
   }),
   launchGame: vi.fn().mockResolvedValue('running'),
   listDirectory: vi.fn().mockResolvedValue([]),
-  readTextFile: vi.fn().mockResolvedValue(''),
+  readTextFile: vi.fn().mockResolvedValue({ contents: '', revision: 'a'.repeat(64) }),
   runBuild: vi.fn().mockResolvedValue({ success: true, output: 'ok', diagnostics: [] }),
-  saveTextFile: vi.fn().mockResolvedValue(undefined),
+  saveTextFile: vi.fn().mockResolvedValue({ contents: '', revision: 'b'.repeat(64) }),
   setWorkspaceRoot: vi.fn().mockResolvedValue(undefined),
   stopGame: vi.fn().mockResolvedValue(undefined),
 }));
@@ -57,5 +60,51 @@ describe('App', () => {
     });
     fireEvent.click(screen.getByText('Check Horizon'));
     expect(await screen.findByText(/Game load and embedding have NOT been verified/)).toBeTruthy();
+  });
+  it('keeps unsaved code on a stale revision instead of silently overwriting the disk', async () => {
+    vi.mocked(listDirectory).mockResolvedValueOnce([{
+      path: '/tmp/ide/main.rs', name: 'main.rs', is_dir: false,
+    }]);
+    vi.mocked(readTextFile).mockResolvedValueOnce({
+      contents: 'original', revision: 'a'.repeat(64),
+    });
+    vi.mocked(saveTextFile).mockRejectedValueOnce(new Error('the file changed since it was opened'));
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/dev/horizon-mod'), {
+      target: { value: '/tmp/ide' },
+    });
+    fireEvent.click(screen.getByText('Load Files'));
+    fireEvent.click(await screen.findByRole('button', { name: /main.rs/ }));
+    const code = await screen.findByRole('textbox', { name: 'Monaco mock document' });
+    fireEvent.change(code, { target: { value: 'changed in IDE' } });
+    expect(screen.getByText(/Unsaved changes/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText(/Save refused:/)).toBeTruthy();
+    expect((code as HTMLTextAreaElement).value).toBe('changed in IDE');
+    expect(vi.mocked(saveTextFile)).toHaveBeenCalledWith('/tmp/ide/main.rs', 'changed in IDE', 'a'.repeat(64));
+  });
+
+  it('advances the revision after a successful atomic save', async () => {
+    vi.mocked(listDirectory).mockResolvedValueOnce([{
+      path: '/tmp/ide/mod.rs', name: 'mod.rs', is_dir: false,
+    }]);
+    vi.mocked(readTextFile).mockResolvedValueOnce({
+      contents: 'before', revision: 'c'.repeat(64),
+    });
+    vi.mocked(saveTextFile).mockResolvedValueOnce({
+      contents: 'after', revision: 'd'.repeat(64),
+    });
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/dev/horizon-mod'), {
+      target: { value: '/tmp/ide' },
+    });
+    fireEvent.click(screen.getByText('Load Files'));
+    fireEvent.click(await screen.findByRole('button', { name: /mod.rs/ }));
+    const code = await screen.findByRole('textbox', { name: 'Monaco mock document' });
+    fireEvent.change(code, { target: { value: 'after' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Saved to disk')).toBeTruthy();
+    expect(screen.queryByText(/Unsaved changes/)).toBeNull();
+    expect(vi.mocked(saveTextFile)).toHaveBeenCalledWith('/tmp/ide/mod.rs', 'after', 'c'.repeat(64));
   });
 });
