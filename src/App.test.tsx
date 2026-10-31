@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
-import { cancelBuild, listDirectory, readTextFile, runBuild, saveTextFile } from './services/tauri/client';
+import { cancelBuild, launchGame, listDirectory, readTextFile, runBuild, saveTextFile } from './services/tauri/client';
 
 vi.mock('@monaco-editor/react', () => ({
   default: ({ value, onChange }: { value: string; onChange: (text: string) => void }) => (
@@ -69,6 +69,16 @@ describe('App', () => {
     fireEvent.click(screen.getByText('Check Horizon'));
     expect(await screen.findByText(/Game load and embedding have NOT been verified/)).toBeTruthy();
   });
+  it('does not launch the disposable Horizon session without explicit consent', () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/Horizon/horizon-client.exe'), {
+      target: { value: 'C:/Horizon/horizon-client.exe' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Launch' }));
+    expect(vi.mocked(launchGame)).not.toHaveBeenCalled();
+  });
+
   it('never builds untrusted project code after consent is declined', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false);
     render(<App />);

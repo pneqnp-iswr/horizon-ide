@@ -1,58 +1,64 @@
 # Horizon IDE
 
-Horizon IDE is a desktop IDE foundation for Horizon (the Rust-based Minecraft reimplementation). It provides a focused game-dev workspace with:
+**An AI-native desktop development environment for the Rust-based [Horizon Minecraft client](https://github.com/horizon-rust/horizon).**
 
-- **Left pane:** Horizon game launch/status panel (external process mode).
-- **Right pane:** Monaco code editor with file save support.
-- **Bottom pane:** Build output, diagnostics, and xterm.js console.
-- **Sidebar:** Workspace settings, file explorer, and AI assistant.
+The product goal is one seamless application with a **directly playable Horizon viewport** beside a full code editor, AI coding assistant, project explorer and diagnostics console. Build, verify and observe changes in a disposable test world without repeatedly switching apps.
 
-## What works now
+> **Engineering preview — not a finished integrated game IDE.** This repository has a working initial Tauri/React desktop shell and a developer workflow. The current game panel starts an **external** Horizon process, not embedded gameplay. The AI provider is **a clearly marked mock**. Real mod-load/gameplay tests, native embedding and live reload are still gated.
 
-- Tauri 2 desktop shell scaffolding with Rust command handlers.
-- React + TypeScript frontend with resizable panels.
-- Workspace-root constrained file listing, file read, and file write operations.
-- Game states: `disconnected`, `launching`, `running`, `error`.
-- Safe external process launch request handling (no hardcoded executable paths).
-- Build panel triggering `cargo check` for the selected workspace.
-- Mock AI provider with explicit mock labeling and extensible interface.
-- Theme/workspace settings persistence with Zustand.
-- Unit tests and GitHub Actions CI.
+## Current foundation
 
-## What is intentionally simulated / pending integration
+| Capability | What exists | What it does **not** prove |
+| --- | --- | --- |
+| Desktop workspace | Tauri 2, React + TypeScript, Monaco, xterm.js, adjustable panels and theme | A game is playable inside a WebView |
+| Source editor | Workspace-root path confinement; UTF-8 source snapshots with SHA-256 revisions, conflict-aware atomic saves and an unsaved-edits indicator | Race-free multi-editor collaboration |
+| Game client | User-selected `horizon-client[.exe]`, checked with `--launch-api`; owned OS process status, Stop, restart | A mod has loaded in a real game |
+| Session isolation | Per-launch disposable `--game-dir` and `--home`, cleaned on normal exit | Native mods are sandboxed (they are not) |
+| Build runner | Explicit per-run consent, async `cargo check --locked`, JSON compiler diagnostics, bounded output/time and cancellation | Cargo build scripts cannot run code (they can) |
+| AI | Extensible provider interface with mock responses and no automatic build rights | Autonomous, production-quality AI agent |
 
-- Native embedded Horizon viewport is **not** implemented yet.
-- Live runtime preview bridge and hot-reload capabilities are **planned only**.
-- AI provider is currently a mock implementation; no production model integration yet.
+**Current code is being integrated through a series of stacked review PRs:** [#1 initial shell](https://github.com/pneqnp-iswr/horizon-ide/pull/1) → [#2 runtime](https://github.com/pneqnp-iswr/horizon-ide/pull/2) → [#7 safe saves](https://github.com/pneqnp-iswr/horizon-ide/pull/7) → [#8 build runner](https://github.com/pneqnp-iswr/horizon-ide/pull/8) → [#9 isolated game](https://github.com/pneqnp-iswr/horizon-ide/pull/9). Do not interpret an unmerged PR's capabilities as a released build.
 
-## Local development
+## Development
 
-```bash
-npm install
-npm run dev
-```
+Requires Node.js 24, an appropriate Rust toolchain, Tauri desktop prerequisites (WebView2 on Windows), and a **trusted, user-installed** Horizon client for actual game launch. The IDE does not bundle Microsoft/Mojang assets or game binaries.
 
-### Tests and checks
-
-```bash
-npm run lint
-npm run test
-npm run build
-cargo test --manifest-path src-tauri/Cargo.toml
-```
-
-### Run as desktop app
-
-```bash
+```sh
+git clone https://github.com/pneqnp-iswr/horizon-ide.git
+cd horizon-ide
+npm ci
 npm run tauri:dev
+
+# Frontend checks
+npm run check
+# Rust core tests
+cargo test --manifest-path src-tauri/Cargo.toml --locked --no-default-features
+# Actual Tauri Windows desktop compile/test is in .github/workflows/windows-desktop.yml
 ```
 
-## Security and permissions model
+`npm run dev` opens the Vite frontend, but **native file/game/build IPC only works in the desktop app**. Opening or browsing an untrusted source tree does not authorize Cargo builds. The **Run Build** confirmation warns that project build scripts and procedural macros can execute with your OS user's privileges. Do not build untrusted projects.
 
-Filesystem and command execution are explicit:
+## Planned live-edit loop
 
-- Workspace root must be configured before file access.
-- File operations are blocked outside the configured workspace root.
-- Game process launch requires a user-provided executable path.
+1. Create/import a version-pinned content or native Rust template.
+2. Modify source in Monaco or review an AI-proposed patch.
+3. Validate or build with explicit project trust consent.
+4. Stage a mod into an **isolated** Horizon preview world.
+5. Use upstream `horizon-ctl` to verify a real content change (inventory/scene assertions, logs); retain engine commit and artifact SHA-256.
+6. Display errors and let a developer undo and repeat.
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md), [ROADMAP.md](./ROADMAP.md), [CONTRIBUTING.md](./CONTRIBUTING.md), and [SECURITY.md](./SECURITY.md).
+Native source-mixin Rust mods normally **compile into a custom game executable and require restart**; do not promise runtime hot replacement. Studio-only 3D/VFX previews and screenshots are not real in-game proof.
+
+Our priorities are tracked in [#3 real game tests](https://github.com/pneqnp-iswr/horizon-ide/issues/3), [#4 native playable viewport](https://github.com/pneqnp-iswr/horizon-ide/issues/4), [#5 build/security](https://github.com/pneqnp-iswr/horizon-ide/issues/5) and [#6 selective Studio migration](https://github.com/pneqnp-iswr/horizon-ide/issues/6).
+
+## Design principles
+
+- A working game-development IDE, not a dashboard of nonfunctional controls.
+- Reuse proven components from [Horizon Studio](https://github.com/pneqnp-iswr/horizon-studio), but retain a clean product boundary and avoid copying the entire old UI.
+- Conservative trust boundaries for native code and LLM-generated patches; human-reviewable diffs, source provenance, no model-controlled shell.
+- Accessibility, configurable layouts, English-first UI with planned Russian translation, keyboard-driven workflow.
+- Explain evidence honestly: **schema-valid → builds → game-loaded → gameplay-tested** are different levels.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md), [ROADMAP.md](ROADMAP.md), [SECURITY.md](SECURITY.md), [Runtime Contract](docs/HORIZON_RUNTIME_CONTRACT.md) and [Build Security](docs/BUILD_SECURITY.md).
+
+License: MIT. Horizon IDE is an independent project and is not endorsed by Mojang, Microsoft or Horizon maintainers.
