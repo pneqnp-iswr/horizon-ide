@@ -200,6 +200,19 @@ fn official_check(checker: &Path, package: &Path, sha256: &str, item: &str) -> R
     parse_official_check(&stdout, sha256, item).map_err(SmokeError)
 }
 
+/// Standalone user-authorized official validation, with no game process.
+pub fn check_package(checker: &Path, package: &Path, item: &str) -> Result<ContentAttestation, SmokeError> {
+    if !item_id_is_valid(item) || package.extension().and_then(|ext| ext.to_str()) != Some("hmod") {
+        return Err(SmokeError("expected a .hmod and valid namespaced item".into()));
+    }
+    let before = file_digest(package)?;
+    let evidence = official_check(checker, package, &before, item)?;
+    if file_digest(package)? != before {
+        return Err(SmokeError("the .hmod changed during the official static check".into()));
+    }
+    Ok(evidence)
+}
+
 fn count(inventory: &Inventory, item: &str) -> u64 {
     inventory.counts.get(item).copied().unwrap_or(0)
 }
@@ -213,13 +226,9 @@ pub fn smoke(ctl: &Path, game: &Path, checker: &Path, package: &Path, item: &str
         return Err(SmokeError("select an existing .hmod package".into()));
     }
     validate_ctl(ctl, game)?;
-    let digest = file_digest(package)?;
-    // Static verification must complete *before* any world is created.
-    // It proves a valid content mod, not membership of a specific item file.
-    let attestation = official_check(checker, package, &digest, item)?;
-    if file_digest(package)? != digest {
-        return Err(SmokeError("package changed during static verification".into()));
-    }
+    // Official static verification happens *before* creating any game world.
+    let attestation = check_package(checker, package, item)?;
+    let digest = attestation.sha256.clone();
     let dir = session_dir()?;
     let socket = dir.join(if cfg!(windows) { "control.json" } else { "control.sock" });
     let path_game = dir.join("game");
