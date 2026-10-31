@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { BuildResult, ContentAttestation, DocumentSnapshot, FileEntry, GameItemSmokeReport, GameStatus, HorizonInstallationReport } from '../../types/app';
+import type { BuildResult, ContentAttestation, CreatedContentProject, DocumentSnapshot, FileEntry, GameItemSmokeReport, GameStatus, HorizonInstallationReport } from '../../types/app';
 
 export async function setWorkspaceRoot(path: string): Promise<void> {
   await invoke('set_workspace_root', { path });
@@ -63,5 +63,16 @@ export async function checkHmodPackage(
 ): Promise<ContentAttestation> {
   return invoke<ContentAttestation>('check_hmod_package', {
     checkerPath, packagePath, itemId, approved,
+  });
+}
+
+export async function createContentStarter(
+  toolPath: string,
+  parentWorkspace: string,
+  name: string,
+  approved: boolean,
+): Promise<CreatedContentProject> {
+  return invoke<CreatedContentProject>('create_content_starter', {
+    toolPath, parentWorkspace, name, approved,
   });
 }

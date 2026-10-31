@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
-import { cancelBuild, checkHmodPackage, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile } from './services/tauri/client';
+import { cancelBuild, checkHmodPackage, createContentStarter, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile } from './services/tauri/client';
 
 vi.mock('@monaco-editor/react', () => ({
   default: ({ value, onChange }: { value: string; onChange: (text: string) => void }) => (
@@ -42,6 +42,13 @@ vi.mock('./services/tauri/client', () => ({
     output: 'ok', diagnostics: [],
   }),
   cancelBuild: vi.fn().mockResolvedValue(true),
+  createContentStarter: vi.fn().mockResolvedValue({
+    path: 'C:/dev/mod/ruby_mod',
+    modId: 'ruby_mod',
+    manifestPath: 'C:/dev/mod/ruby_mod/horizon-mod.toml',
+    template: 'official-horizon-content',
+    gameLoadVerified: false,
+  }),
   checkHmodPackage: vi.fn().mockResolvedValue({
     checker: 'cargo-horizon-mod',
     checkerReportKind: 'mod',
@@ -114,6 +121,32 @@ describe('App', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Launch' }));
     expect(vi.mocked(launchGame)).not.toHaveBeenCalled();
+  });
+
+  it('refuses official template generation without approval', () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/dev/horizon-mod'), { target: { value: 'C:/dev/mod' } });
+    fireEvent.change(screen.getByPlaceholderText('C:/Tools/cargo-horizon-mod.exe'), { target: { value: 'C:/Tools/cargo-horizon-mod.exe' } });
+    fireEvent.change(screen.getByPlaceholderText('ruby_mod'), { target: { value: 'ruby_mod' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create official starter' }));
+    expect(vi.mocked(createContentStarter)).not.toHaveBeenCalled();
+  });
+
+  it('opens a generated official content manifest without claiming game verification', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(listDirectory).mockResolvedValueOnce([{ path: 'C:/dev/mod/ruby_mod/horizon-mod.toml', name: 'horizon-mod.toml', is_dir: false }]);
+    vi.mocked(readTextFile).mockResolvedValueOnce({ contents: 'id = "ruby_mod"', revision: 'f'.repeat(64) });
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/dev/horizon-mod'), { target: { value: 'C:/dev/mod' } });
+    fireEvent.change(screen.getByPlaceholderText('C:/Tools/cargo-horizon-mod.exe'), { target: { value: 'C:/Tools/cargo-horizon-mod.exe' } });
+    fireEvent.change(screen.getByPlaceholderText('ruby_mod'), { target: { value: 'ruby_mod' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create official starter' }));
+    expect(await screen.findByText(/Created ruby_mod: official content template, not yet tested in game/)).toBeTruthy();
+    expect((screen.getByRole('textbox', { name: 'Monaco mock document' }) as HTMLTextAreaElement).value).toBe('id = "ruby_mod"');
+    expect(vi.mocked(createContentStarter)).toHaveBeenCalledWith(
+      'C:/Tools/cargo-horizon-mod.exe', 'C:/dev/mod', 'ruby_mod', true,
+    );
   });
 
   it('does not run the native package checker without confirmation', () => {
