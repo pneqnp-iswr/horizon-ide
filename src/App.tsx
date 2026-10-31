@@ -173,6 +173,7 @@ function App() {
   }
 
   async function onLaunchGame() {
+    if (!window.confirm('Start Horizon in a new disposable test directory? Personal saves and game settings will not be used, and the test directory is deleted when the session ends.')) return;
     setStatus('launching');
     try {
       const next = await launchGame(gamePath, []);
@@ -289,7 +290,7 @@ function App() {
             </div>
             <p role="status">{gameProbe}</p>
             <p>
-              Supported today: one explicitly selected horizon-client process, without custom launch flags. “Running” means the OS process is alive, not that a world or mod has loaded. Native game embedding and in-game testing remain unverified.
+              Supported today: one explicitly selected horizon-client process in a disposable test game directory, isolated from personal saves. “Running” means the OS process is alive, not that a world or mod has loaded. Native game embedding and in-game testing remain unverified.
             </p>
           </article>
           <div className="splitter vertical" onMouseDown={attachHorizontalResize} />

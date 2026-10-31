@@ -63,6 +63,7 @@ struct AppState {
     build_process: Arc<Mutex<Option<Child>>>,
     game_status: Mutex<GameStatus>,
     game_process: Mutex<Option<Child>>,
+    game_session_dir: Mutex<Option<PathBuf>>,
 }
 
 // The IDE owns at most one external game process. Dropping its runtime
@@ -82,6 +83,11 @@ impl Drop for AppState {
             if let Some(child) = process.as_mut() {
                 let _ = child.kill();
                 let _ = child.wait();
+            }
+        }
+        if let Ok(session) = self.game_session_dir.get_mut() {
+            if let Some(dir) = session.take() {
+                let _ = fs::remove_dir_all(dir);
             }
         }
     }
@@ -426,6 +432,33 @@ async fn inspect_horizon_client(executable_path: String) -> Result<HorizonInstal
         .map_err(|error| AppError::UnsupportedLaunchApi(format!("probe task failed: {error}")))?
 }
 
+/// A fresh, collision-resistant directory is owned by one IDE session.
+/// Never share a personal .minecraft or Horizon game directory with tests.
+fn disposable_game_dir() -> Result<PathBuf, AppError> {
+    for _ in 0..8 {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH)
+            .unwrap_or_default().as_nanos();
+        let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "horizon-ide-disposable-{}-{nonce}-{sequence}", std::process::id()
+        ));
+        match fs::create_dir(&path) {
+            Ok(()) => {
+                let setup = fs::create_dir(path.join("game"))
+                    .and_then(|_| fs::create_dir(path.join("home")));
+                if let Err(error) = setup {
+                    let _ = fs::remove_dir_all(&path);
+                    return Err(AppError::Io(error));
+                }
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(AppError::Io(error)),
+        }
+    }
+    Err(AppError::InvalidLaunchRequest)
+}
+
 /// Reaps a completed child before returning the public process status.
 /// Running means only that the OS process exists, not that a game world loaded.
 fn refresh_game_process(state: &AppState) -> GameStatus {
@@ -435,6 +468,11 @@ fn refresh_game_process(state: &AppState) -> GameStatus {
         match child.try_wait() {
             Ok(Some(exit)) => {
                 *process = None;
+                if let Some(dir) = state.game_session_dir.lock()
+                    .expect("session lock poisoned").take()
+                {
+                    let _ = fs::remove_dir_all(dir);
+                }
                 *status = if exit.success() { GameStatus::Disconnected } else { GameStatus::Error };
             }
             Ok(None) => *status = GameStatus::Running,
@@ -463,28 +501,42 @@ async fn launch_game(request: LaunchRequest, state: State<'_, AppState>) -> Resu
     }
     *state.game_status.lock().expect("status lock poisoned") = GameStatus::Launching;
 
-    // Never pipe stderr without a reader: the child can deadlock when it
-    // fills the pipe. A bounded log collector will be a separate adapter.
+    let session = disposable_game_dir()?;
+    // Strictly isolate experimental gameplay from personal saves and account
+    // state. Launch API capabilities were checked before this point.
     let spawn = Command::new(executable)
+        .arg("--game-dir").arg(session.join("game"))
+        .arg("--home").arg(session.join("home"))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn();
     match spawn {
         Ok(mut child) => {
-            match child.try_wait()? {
-                Some(_) => {
+            match child.try_wait() {
+                Ok(Some(_)) => {
+                    let _ = child.wait();
+                    let _ = fs::remove_dir_all(session);
                     *state.game_status.lock().expect("status lock poisoned") = GameStatus::Error;
                     Ok(GameStatus::Error)
                 }
-                None => {
+                Ok(None) => {
                     *process = Some(child);
+                    *state.game_session_dir.lock().expect("session lock poisoned") = Some(session);
                     *state.game_status.lock().expect("status lock poisoned") = GameStatus::Running;
                     Ok(GameStatus::Running)
+                }
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = fs::remove_dir_all(session);
+                    *state.game_status.lock().expect("status lock poisoned") = GameStatus::Error;
+                    Err(AppError::Io(error))
                 }
             }
         }
         Err(error) => {
+            let _ = fs::remove_dir_all(session);
             *state.game_status.lock().expect("status lock poisoned") = GameStatus::Error;
             Err(AppError::Io(error))
         }
@@ -503,6 +555,9 @@ fn stop_game(state: State<AppState>) -> Result<(), AppError> {
         child.wait()?;
     }
     *process = None;
+    if let Some(dir) = state.game_session_dir.lock().expect("session lock poisoned").take() {
+        let _ = fs::remove_dir_all(dir);
+    }
     *state.game_status.lock().expect("status lock poisoned") = GameStatus::Disconnected;
     Ok(())
 }
@@ -636,6 +691,16 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disposable_game_session_has_isolated_game_and_home_folders() {
+        let session = disposable_game_dir().expect("create disposable session");
+        assert!(session.starts_with(std::env::temp_dir()));
+        assert!(session.join("game").is_dir());
+        assert!(session.join("home").is_dir());
+        assert!(!session.join("game").join("saves").exists());
+        fs::remove_dir_all(session).expect("clean test session");
+    }
 
     #[test]
     fn compiler_messages_have_real_file_lines_and_ignore_unrelated_json() {
