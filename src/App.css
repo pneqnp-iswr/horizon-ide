@@ -25,6 +25,7 @@ body, #root { margin: 0; min-height: 100vh; background: var(--bg); color: var(--
 .app-shell { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
 .sidebar { border-right: 1px solid var(--border); padding: 12px; background: var(--bg-soft); overflow: auto; display: grid; gap: 8px; align-content: start; }
 .sidebar h1 { margin: 0 0 4px; font-size: 20px; }
+.shortcut-legend { margin: 0; font-size: 10px; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
 .sidebar h2 { margin: 8px 0 0; font-size: 14px; color: var(--muted); }
 .sidebar label { display: grid; gap: 4px; font-size: 12px; }
 .sidebar input, .sidebar textarea, .sidebar select { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px; }
