@@ -38,6 +38,14 @@ button:disabled { opacity: .6; cursor: default; }
 .top-panels { display: flex; min-height: 0; }
 .panel { background: var(--bg); padding: 10px; border-bottom: 1px solid var(--border); display: grid; gap: 8px; min-width: 0; }
 .panel header { display: flex; align-items: center; justify-content: space-between; }
+.game-panel { overflow: auto; align-content: start; grid-auto-rows: max-content; }
+.smoke-tools { border: 1px solid var(--border); padding: 10px; border-radius: 6px; }
+.smoke-tools summary { cursor: pointer; font-size: 12px; font-weight: 650; }
+.smoke-tools label { display: grid; gap: 5px; margin-top: 9px; font-size: 12px; }
+.smoke-tools label input { width: 100%; min-width: 0; }
+.smoke-tools button { margin-top: 12px; width: 100%; }
+.smoke-tools p { overflow-wrap: anywhere; font-size: 12px; color: var(--muted); }
+
 .panel h2 { font-size: 14px; margin: 0; }
 .panel input { width: 100%; background: var(--bg-soft); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px; }
 .button-row { display: flex; gap: 6px; }
