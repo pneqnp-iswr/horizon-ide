@@ -495,6 +495,9 @@ fn refresh_game_process(state: &AppState) -> GameStatus {
 #[cfg(feature = "desktop")]
 #[tauri::command]
 async fn launch_game(request: LaunchRequest, state: State<'_, AppState>) -> Result<GameStatus, AppError> {
+    if state.smoke_running.load(Ordering::Acquire) {
+        return Err(AppError::SmokeAlreadyRunning);
+    }
     let executable = validated_horizon_executable(&request)?;
     let probe_path = executable.clone();
     tauri::async_runtime::spawn_blocking(move || probe_horizon_installation(&probe_path))
