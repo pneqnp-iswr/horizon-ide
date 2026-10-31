@@ -1,6 +1,7 @@
 mod build_runner;
 mod game_bridge;
 mod game_control;
+mod package_attestation;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -494,6 +495,9 @@ fn refresh_game_process(state: &AppState) -> GameStatus {
 #[cfg(feature = "desktop")]
 #[tauri::command]
 async fn launch_game(request: LaunchRequest, state: State<'_, AppState>) -> Result<GameStatus, AppError> {
+    if state.smoke_running.load(Ordering::Acquire) {
+        return Err(AppError::SmokeAlreadyRunning);
+    }
     let executable = validated_horizon_executable(&request)?;
     let probe_path = executable.clone();
     tauri::async_runtime::spawn_blocking(move || probe_horizon_installation(&probe_path))
@@ -671,6 +675,28 @@ fn cancel_build(state: State<AppState>) -> bool {
     true
 }
 
+/// Official package static check without launching Horizon. The selected
+/// checker itself is trusted native code; explicit user approval is required.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+async fn check_hmod_package(
+    checker_path: String,
+    package_path: String,
+    item_id: String,
+    approved: bool,
+    state: State<'_, AppState>,
+) -> Result<package_attestation::ContentAttestation, AppError> {
+    if !approved { return Err(AppError::BuildApprovalRequired); }
+    let checker = PathBuf::from(checker_path).canonicalize()?;
+    let root = state.workspace_root.lock().expect("workspace root lock poisoned")
+        .clone().ok_or(AppError::MissingWorkspaceRoot)?;
+    let package = ensure_within_workspace(&root, Path::new(&package_path))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        game_control::check_package(&checker, &package, &item_id)
+            .map_err(|error| AppError::SmokeFailed(error.to_string()))
+    }).await.map_err(|error| AppError::SmokeFailed(error.to_string()))?
+}
+
 /// Runs against a fresh disposable world only. No player account or
 /// personal saves are intentionally used. The result is inventory-observed
 /// evidence, NOT a verified package-to-item attribution.
@@ -679,6 +705,7 @@ fn cancel_build(state: State<AppState>) -> bool {
 async fn run_game_item_smoke(
     ctl_path: String,
     game_path: String,
+    checker_path: String,
     package_path: String,
     item_id: String,
     approved: bool,
@@ -689,6 +716,7 @@ async fn run_game_item_smoke(
         executable_path: game_path, args: vec![],
     })?;
     let ctl = PathBuf::from(ctl_path).canonicalize()?;
+    let checker = PathBuf::from(checker_path).canonicalize()?;
     let root = state.workspace_root.lock().expect("workspace root lock poisoned")
         .clone().ok_or(AppError::MissingWorkspaceRoot)?;
     let package = ensure_within_workspace(&root, Path::new(&package_path))?;
@@ -707,7 +735,7 @@ async fn run_game_item_smoke(
         // caller explicitly approved this disposable session.
         probe_horizon_installation(&game)
             .map_err(|e| format!("Launch API: {e}"))?;
-        game_control::smoke(&ctl, &game, &package, &item_id)
+        game_control::smoke(&ctl, &game, &checker, &package, &item_id)
             .map_err(|e| e.to_string())
     }).await;
     state.smoke_running.store(false, Ordering::Release);
@@ -731,6 +759,7 @@ pub fn run() {
             get_game_status,
             run_build,
             cancel_build,
+            check_hmod_package,
             run_game_item_smoke
         ])
         .run(tauri::generate_context!())

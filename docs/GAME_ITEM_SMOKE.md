@@ -6,15 +6,23 @@ This feature is a **real horizon-ctl protocol adapter**, not a mock UI result an
 
 1. Install or build a trusted local Horizon and `horizon-ctl` side by side, prepare the game resources through the official owner-verified Horizon launcher, and confirm the client answers `--launch-api`.
 2. Set the Horizon IDE workspace to the mod source directory. Produce an actual content `.hmod` with the official `cargo horizon-mod build` tool. The IDE does not generate a fake package or download game files.
-3. In **Horizon Game**, expand **In-game content smoke test (experimental)** and provide `horizon-ctl`, the `.hmod` file inside the workspace, and a specific namespaced item ID such as `ruby:ruby`.
+3. In **Horizon Game**, expand **In-game content smoke test (experimental)** and provide `horizon-ctl`, the `.hmod` file inside the workspace, and the trusted official `cargo-horizon-mod` executable (installed via `cargo install --git https://github.com/horizon-rust/horizon cargo-horizon-mod`), plus a specific namespaced item ID such as `ruby:ruby`.
 4. Read the approval prompt: this runs a trusted native game binary and an actual isolated world. The IDE uses unique temporary `game` / `home` folders, not the user's personal saved worlds.
 5. The adapter launches `horizon-ctl --socket ... launch --world IDEPreview --creative --wait --game ... --game-dir ... --home ... --offscreen --dev-mod ...`, then `wait-for loaded`, reads a **strictly validated inventory**, requires the game to **reject an absent control item**, gives the requested target, and polls for **exactly one additional matching item in a real slot**.
 6. It sends `quit` on completion or failure. If quitting cannot be confirmed it preserves the temporary session path for manual inspection rather than killing an unverified PID. The frontend shows the structured observation in the diagnostics/output panel.
 
+## Official static package check (mandatory)
+
+The **Verify .hmod (no game)** action exposes this check independently: it requires approval to execute a trusted local native checker, validates the artifact, and shows the returned attestation without starting Horizon. The in-game smoke reuses exactly the same gate before launch.
+
+Before a world starts, Horizon IDE launches only a user-selected, trusted `cargo-horizon-mod[.exe]` binary with `check PACKAGE --json` (no shell). The checker must return `ok: true`, `kind: "mod"`, a valid nonreserved mod ID, `api: "0.2"`, `capabilities` containing `registries`, and the **exact selected package SHA-256**. The test item namespace must equal the checked mod ID. Package SHA-256 is checked again after the static check and after the in-game observation. A different archive, wrong API, invalid namespace or failed checker stops the operation before game launch.
+
+This proves **official content-mod static acceptance**, not the presence of a named member inside the archive. `targetMemberVerified: false` and `packageItemOriginVerified: false` remain mandatory until the item JSON is independently inspected and attributed. The checker's filename is not a cryptographic identity verification; execute only a binary from your trusted installation.
+
 ## Strict evidence boundary
 
 - `inventory-observed`: exact item slot and totals agree, negative control rejected, and the game reported an isolated session. This is a useful *runtime observation*, not content provenance.
-- `packageItemOriginVerified: false` **always** at this stage. The provided item ID is supplied by the developer, not proven to exist in the selected archive. A vanilla item would otherwise produce a false positive.
+- `packageItemOriginVerified: false` **always** at this stage. Official registry validation, SHA, and exact mod namespace are confirmed, but an individual member file is not yet proven to exist or be loaded. Vanilla namespace inputs are rejected.
 - `game-load`: **not yet implemented**. Requires independently checking the `.hmod` manifest and content entries plus the Horizon static registry checker and game version, then retaining a bound evidence artifact.
 - `gameplay`: **not tested**. Inventory change is not evidence of an entity's AI, mob behavior, rendering, controls or events.
 - `embedded-viewport`: **not implemented**. The game is headless/offscreen in this smoke test, and a screenshot is never substituted for live rendering.
@@ -24,7 +32,7 @@ The unversioned `horizon-ctl` control API may change. This adapter pins its assu
 ## Security and limitations
 
 - Only a selected executable named `horizon-client` and a sibling `horizon-ctl` may be used; these executable names are **not** proof of binary authenticity. Run binaries you trust.
-- The `.hmod` is constrained to the configured IDE workspace, must be a ZIP-header file with `.hmod` extension and at most 64 MiB, and is SHA-256 hashed. ZIP header checking **is not** a full package validation.
+- The `.hmod` is constrained to the configured IDE workspace, must be a ZIP-header file with `.hmod` extension and at most 64 MiB, and is SHA-256 hashed. The separate official registry checker validates the complete package; the IDE does not attempt to implement an ad hoc ZIP parser.
 - Explicit per-test consent is mandatory; the backend refuses `approved=false` regardless of frontend behavior. The adapter does not copy session credentials into files or access the user's personal game directory.
 - No arbitrary host command or user-provided CLI flags are forwarded. CLI subprocess stdout/stderr is drained but retained output is limited to 64 KiB per stream and command timeouts are enforced.
 - The launched game is a separate process. Stopping `horizon-ctl` on timeout does **not** guarantee killing game descendants. If `quit` fails, operators must manually inspect the isolated session. A future adapter needs explicit cross-process ownership, process-tree termination, cancellation, and durable evidence journals.

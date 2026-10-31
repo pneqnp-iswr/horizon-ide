@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
-import { cancelBuild, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile } from './services/tauri/client';
+import { cancelBuild, checkHmodPackage, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile } from './services/tauri/client';
 
 vi.mock('@monaco-editor/react', () => ({
   default: ({ value, onChange }: { value: string; onChange: (text: string) => void }) => (
@@ -42,11 +42,33 @@ vi.mock('./services/tauri/client', () => ({
     output: 'ok', diagnostics: [],
   }),
   cancelBuild: vi.fn().mockResolvedValue(true),
+  checkHmodPackage: vi.fn().mockResolvedValue({
+    checker: 'cargo-horizon-mod',
+    checkerReportKind: 'mod',
+    modId: 'ruby',
+    version: '0.1.0',
+    contentApi: '0.2',
+    sha256: 'a'.repeat(64),
+    officialStaticCheckPassed: true,
+    targetNamespaceMatches: true,
+    targetMemberVerified: false,
+  }),
   runGameItemSmoke: vi.fn().mockResolvedValue({
     schema: 'horizon-ide.item-smoke/1',
     level: 'inventory-observed',
     itemId: 'ruby:ruby',
     packageSha256: 'a'.repeat(64),
+    staticAttestation: {
+      checker: 'cargo-horizon-mod',
+      checkerReportKind: 'mod',
+      modId: 'ruby',
+      version: '0.1.0',
+      contentApi: '0.2',
+      sha256: 'a'.repeat(64),
+      officialStaticCheckPassed: true,
+      targetNamespaceMatches: true,
+      targetMemberVerified: false,
+    },
     packageItemOriginVerified: false,
     gameVersion: 'test',
     launchAccepted: true,
@@ -94,12 +116,41 @@ describe('App', () => {
     expect(vi.mocked(launchGame)).not.toHaveBeenCalled();
   });
 
+  it('does not run the native package checker without confirmation', () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/dev/horizon-mod'), { target: { value: 'C:/dev/mod' } });
+    fireEvent.change(screen.getByPlaceholderText('C:/Users/dev/.cargo/bin/cargo-horizon-mod.exe'), { target: { value: 'C:/Users/dev/.cargo/bin/cargo-horizon-mod.exe' } });
+    fireEvent.change(screen.getByPlaceholderText('C:/dev/mod/target/mod.hmod'), { target: { value: 'C:/dev/mod/target/mod.hmod' } });
+    fireEvent.change(screen.getByPlaceholderText('ruby:ruby'), { target: { value: 'ruby:ruby' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Verify .hmod (no game)' }));
+    expect(vi.mocked(checkHmodPackage)).not.toHaveBeenCalled();
+  });
+
+  it('shows static verification without asserting an archive member exists', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/dev/horizon-mod'), { target: { value: 'C:/dev/mod' } });
+    fireEvent.change(screen.getByPlaceholderText('C:/Users/dev/.cargo/bin/cargo-horizon-mod.exe'), { target: { value: 'C:/Users/dev/.cargo/bin/cargo-horizon-mod.exe' } });
+    fireEvent.change(screen.getByPlaceholderText('C:/dev/mod/target/mod.hmod'), { target: { value: 'C:/dev/mod/target/mod.hmod' } });
+    fireEvent.change(screen.getByPlaceholderText('ruby:ruby'), { target: { value: 'ruby:ruby' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Verify .hmod (no game)' }));
+    expect(await screen.findByText(/Static check passed: ruby 0.1.0/)).toBeTruthy();
+    expect(screen.getByText(/exact item file NOT verified/)).toBeTruthy();
+    expect(vi.mocked(checkHmodPackage)).toHaveBeenCalledWith(
+      'C:/Users/dev/.cargo/bin/cargo-horizon-mod.exe', 'C:/dev/mod/target/mod.hmod', 'ruby:ruby', true,
+    );
+  });
+
   it('refuses game item testing without an explicit approval', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false);
     render(<App />);
     fireEvent.change(screen.getByPlaceholderText('C:/dev/horizon-mod'), { target: { value: 'C:/dev/mod' } });
     fireEvent.change(screen.getByPlaceholderText('C:/Horizon/horizon-client.exe'), { target: { value: 'C:/Horizon/horizon-client.exe' } });
     fireEvent.change(screen.getByPlaceholderText('C:/Horizon/horizon-ctl.exe'), { target: { value: 'C:/Horizon/horizon-ctl.exe' } });
+    fireEvent.change(screen.getByPlaceholderText('C:/Users/dev/.cargo/bin/cargo-horizon-mod.exe'), {
+      target: { value: 'C:/Users/dev/.cargo/bin/cargo-horizon-mod.exe' },
+    });
     fireEvent.change(screen.getByPlaceholderText('C:/dev/mod/target/mod.hmod'), { target: { value: 'C:/dev/mod/target/mod.hmod' } });
     fireEvent.change(screen.getByPlaceholderText('ruby:ruby'), { target: { value: 'ruby:ruby' } });
     fireEvent.click(screen.getByText('Test item in disposable world'));
@@ -112,6 +163,9 @@ describe('App', () => {
     fireEvent.change(screen.getByPlaceholderText('C:/dev/horizon-mod'), { target: { value: 'C:/dev/mod' } });
     fireEvent.change(screen.getByPlaceholderText('C:/Horizon/horizon-client.exe'), { target: { value: 'C:/Horizon/horizon-client.exe' } });
     fireEvent.change(screen.getByPlaceholderText('C:/Horizon/horizon-ctl.exe'), { target: { value: 'C:/Horizon/horizon-ctl.exe' } });
+    fireEvent.change(screen.getByPlaceholderText('C:/Users/dev/.cargo/bin/cargo-horizon-mod.exe'), {
+      target: { value: 'C:/Users/dev/.cargo/bin/cargo-horizon-mod.exe' },
+    });
     fireEvent.change(screen.getByPlaceholderText('C:/dev/mod/target/mod.hmod'), { target: { value: 'C:/dev/mod/target/mod.hmod' } });
     fireEvent.change(screen.getByPlaceholderText('ruby:ruby'), { target: { value: 'ruby:ruby' } });
     fireEvent.click(screen.getByText('Test item in disposable world'));
@@ -119,6 +173,7 @@ describe('App', () => {
     expect(vi.mocked(runGameItemSmoke)).toHaveBeenCalledWith(
       'C:/Horizon/horizon-ctl.exe',
       'C:/Horizon/horizon-client.exe',
+      'C:/Users/dev/.cargo/bin/cargo-horizon-mod.exe',
       'C:/dev/mod/target/mod.hmod',
       'ruby:ruby', true,
     );
