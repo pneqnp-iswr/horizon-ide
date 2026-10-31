@@ -8,6 +8,7 @@ import './App.css';
 import { MockAIProvider } from './services/ai/provider';
 import { cancelBuild, checkHmodPackage, getGameStatus, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
 import { useWorkspaceStore } from './store/useWorkspaceStore';
+import ProjectExplorer from './components/ProjectExplorer';
 import type { BuildDiagnostic, FileEntry, GameStatus } from './types/app';
 
 const mockProvider = new MockAIProvider();
@@ -38,6 +39,7 @@ function App() {
   const [diagnostics, setDiagnostics] = useState<BuildDiagnostic[]>([]);
   const [buildOutput, setBuildOutput] = useState('Build output will appear here.');
   const [buildBusy, setBuildBusy] = useState(false);
+  const [explorerRevision, setExplorerRevision] = useState(0);
   const [leftWidth, setLeftWidth] = useState(45);
   const [bottomHeight, setBottomHeight] = useState(35);
 
@@ -91,6 +93,7 @@ function App() {
     await setWorkspaceRoot(workspaceRoot);
     const entries = await listDirectory(workspaceRoot);
     setFiles(entries);
+    setExplorerRevision((revision) => revision + 1);
   }
 
   async function openFile(path: string) {
@@ -307,15 +310,8 @@ function App() {
           </select>
         </label>
         <h2>Project Explorer</h2>
-        <ul className="file-list">
-          {files.map((file) => (
-            <li key={file.path}>
-              <button disabled={file.is_dir} onClick={() => void openFile(file.path)}>
-                {file.is_dir ? '📁' : '📄'} {file.name}
-              </button>
-            </li>
-          ))}
-        </ul>
+        <ProjectExplorer key={`${workspaceRoot}:${explorerRevision}`} entries={files}
+          selectedPath={selectedFile} onOpenFile={openFile} />
         <h2>AI Assistant ({mockProvider.label})</h2>
         <textarea value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} rows={4} />
         <button onClick={() => void onAIRequest()}>Run AI Prompt</button>
