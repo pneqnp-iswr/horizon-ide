@@ -3,6 +3,7 @@ mod content_build;
 mod game_bridge;
 mod game_control;
 mod game_window;
+mod native_host;
 mod local_ai;
 mod package_attestation;
 mod project_starter;
@@ -56,6 +57,8 @@ enum AppError {
     GameProcessActive,
     #[error("game smoke failed: {0}")]
     SmokeFailed(String),
+    #[error("experimental native game hosting failed: {0}")]
+    NativeHost(String),
     #[error("invalid launch request")]
     InvalidLaunchRequest,
     #[error("Horizon is already running in this IDE session")]
@@ -89,6 +92,8 @@ struct AppState {
     game_status: Mutex<GameStatus>,
     game_process: Mutex<Option<Child>>,
     game_session_dir: Mutex<Option<PathBuf>>,
+    #[cfg(target_os = "windows")]
+    game_native_host: Mutex<Option<native_host::HostedWindow>>,
 }
 
 // The IDE owns at most one external game process. Dropping its runtime
@@ -103,6 +108,10 @@ impl Drop for AppState {
                 let _ = child.wait();
             }
             *process = None;
+        }
+        #[cfg(target_os = "windows")]
+        if let Ok(host) = self.game_native_host.get_mut() {
+            if let Some(owned) = host.take() { let _ = owned.detach(); }
         }
         if let Ok(process) = self.game_process.get_mut() {
             if let Some(child) = process.as_mut() {
@@ -492,6 +501,11 @@ fn refresh_game_process(state: &AppState) -> GameStatus {
     if let Some(child) = process.as_mut() {
         match child.try_wait() {
             Ok(Some(exit)) => {
+                #[cfg(target_os = "windows")]
+                if let Some(owned) = state.game_native_host.lock()
+                    .expect("native game lock poisoned").take() {
+                    let _ = owned.detach();
+                }
                 *process = None;
                 if let Some(dir) = state.game_session_dir.lock()
                     .expect("session lock poisoned").take()
@@ -574,7 +588,14 @@ async fn launch_game(request: LaunchRequest, state: State<'_, AppState>) -> Resu
 #[cfg(feature = "desktop")]
 #[tauri::command]
 fn stop_game(state: State<AppState>) -> Result<(), AppError> {
+    // Lock order must match refresh_game_process: process before native host.
+    // Otherwise a concurrent status poll + Stop could deadlock.
     let mut process = state.game_process.lock().expect("process lock poisoned");
+    #[cfg(target_os = "windows")]
+    if let Some(hosted) = state.game_native_host.lock()
+        .expect("native game lock poisoned").take() {
+        let _ = hosted.detach();
+    }
     if let Some(child) = process.as_mut() {
         if child.try_wait()?.is_none() {
             child.kill()?;
@@ -589,6 +610,81 @@ fn stop_game(state: State<AppState>) -> Result<(), AppError> {
     *state.game_status.lock().expect("status lock poisoned") = GameStatus::Disconnected;
     Ok(())
 }
+
+/// Experimental: native Win32 SetParent of ONLY the actual IDE-owned
+/// Horizon window into the Tauri host's physical client-region coordinates.
+/// Reversible; explicitly approved; no claim of rendered/playable WGPU frames.
+#[cfg(all(feature = "desktop", target_os = "windows"))]
+#[tauri::command]
+fn attach_native_game(
+    window: tauri::WebviewWindow,
+    rect: native_host::ViewportRect,
+    approved: bool,
+    state: State<AppState>,
+) -> Result<native_host::HostReport, AppError> {
+    if !approved {
+        return Err(AppError::NativeHost("explicit permission is required for experimental Win32 reparenting".into()));
+    }
+    refresh_game_process(&state);
+    let pid = state.game_process.lock().expect("game process lock poisoned")
+        .as_ref().map(std::process::Child::id)
+        .ok_or_else(|| AppError::NativeHost("no IDE-owned running Horizon game process".into()))?;
+    let mut guard = state.game_native_host.lock().expect("native host lock poisoned");
+    if guard.is_some() {
+        return Err(AppError::NativeHost("game native HWND is already attached; detach it first".into()));
+    }
+    let host = window.hwnd().map_err(|error| AppError::NativeHost(error.to_string()))?;
+    let hosted = native_host::attach_game(host.0 as isize, pid, rect)
+        .map_err(AppError::NativeHost)?;
+    *guard = Some(hosted);
+    Ok(native_host::HostReport {
+        attached_native_window: true, playable_verified: false, game_pid: pid,
+        message: "Win32 child window attached experimentally. Rendering, cursor/focus, DPI and gameplay have NOT been tested on a real Horizon installation.".into(),
+    })
+}
+
+#[cfg(all(feature = "desktop", not(target_os = "windows")))]
+#[tauri::command]
+fn attach_native_game(
+    rect: native_host::ViewportRect,
+    approved: bool,
+) -> Result<native_host::HostReport, AppError> {
+    let _ = (rect, approved);
+    Err(AppError::NativeHost("experimental native viewport is Windows-only".into()))
+}
+
+#[cfg(all(feature = "desktop", target_os = "windows"))]
+#[tauri::command]
+fn resize_native_game(
+    rect: native_host::ViewportRect,
+    state: State<AppState>,
+) -> Result<native_host::HostReport, AppError> {
+    let guard = state.game_native_host.lock().expect("native host lock poisoned");
+    let attached = guard.as_ref().ok_or_else(|| AppError::NativeHost("game is not attached".into()))?;
+    attached.resize(rect).map_err(AppError::NativeHost)
+}
+
+#[cfg(all(feature = "desktop", not(target_os = "windows")))]
+#[tauri::command]
+fn resize_native_game(rect: native_host::ViewportRect) -> Result<native_host::HostReport, AppError> {
+    let _ = rect;
+    Err(AppError::NativeHost("experimental native viewport is Windows-only".into()))
+}
+
+#[cfg(all(feature = "desktop", target_os = "windows"))]
+#[tauri::command]
+fn detach_native_game(state: State<AppState>) -> Result<(), AppError> {
+    let mut guard = state.game_native_host.lock().expect("native host lock poisoned");
+    if let Some(hosted) = guard.as_ref() {
+        hosted.detach().map_err(AppError::NativeHost)?;
+    }
+    *guard = None;
+    Ok(())
+}
+
+#[cfg(all(feature = "desktop", not(target_os = "windows")))]
+#[tauri::command]
+fn detach_native_game() -> Result<(), AppError> { Ok(()) }
 
 /// Inspect only the real HWND(s) belonging to the game process launched
 /// by this Tauri session. Reports discovery only, never claims embed/playability.
@@ -877,6 +973,9 @@ pub fn run() {
             stop_game,
             get_game_status,
             get_game_window_probe,
+            attach_native_game,
+            resize_native_game,
+            detach_native_game,
             run_build,
             build_content_mod,
             cancel_build,
