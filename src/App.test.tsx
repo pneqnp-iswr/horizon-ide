@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
-import { cancelBuild, listDirectory, readTextFile, runBuild, saveTextFile } from './services/tauri/client';
+import { cancelBuild, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile } from './services/tauri/client';
 
 vi.mock('@monaco-editor/react', () => ({
   default: ({ value, onChange }: { value: string; onChange: (text: string) => void }) => (
@@ -42,6 +42,21 @@ vi.mock('./services/tauri/client', () => ({
     output: 'ok', diagnostics: [],
   }),
   cancelBuild: vi.fn().mockResolvedValue(true),
+  runGameItemSmoke: vi.fn().mockResolvedValue({
+    schema: 'horizon-ide.item-smoke/1',
+    level: 'inventory-observed',
+    itemId: 'ruby:ruby',
+    packageSha256: 'a'.repeat(64),
+    packageItemOriginVerified: false,
+    gameVersion: 'test',
+    launchAccepted: true,
+    negativeControlRefused: true,
+    exactSlotDelta: true,
+    before: 0, after: 1,
+    changedSlots: [0],
+    sessionCleaned: true,
+    notes: ['Not proof of package origin'],
+  }),
   saveTextFile: vi.fn().mockResolvedValue({ contents: '', revision: 'b'.repeat(64) }),
   setWorkspaceRoot: vi.fn().mockResolvedValue(undefined),
   stopGame: vi.fn().mockResolvedValue(undefined),
@@ -69,6 +84,36 @@ describe('App', () => {
     fireEvent.click(screen.getByText('Check Horizon'));
     expect(await screen.findByText(/Game load and embedding have NOT been verified/)).toBeTruthy();
   });
+  it('refuses game item testing without an explicit approval', () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/dev/horizon-mod'), { target: { value: 'C:/dev/mod' } });
+    fireEvent.change(screen.getByPlaceholderText('C:/Horizon/horizon-client.exe'), { target: { value: 'C:/Horizon/horizon-client.exe' } });
+    fireEvent.change(screen.getByPlaceholderText('C:/Horizon/horizon-ctl.exe'), { target: { value: 'C:/Horizon/horizon-ctl.exe' } });
+    fireEvent.change(screen.getByPlaceholderText('C:/dev/mod/target/mod.hmod'), { target: { value: 'C:/dev/mod/target/mod.hmod' } });
+    fireEvent.change(screen.getByPlaceholderText('ruby:ruby'), { target: { value: 'ruby:ruby' } });
+    fireEvent.click(screen.getByText('Test item in disposable world'));
+    expect(vi.mocked(runGameItemSmoke)).not.toHaveBeenCalled();
+  });
+
+  it('reports only inventory observation, not package provenance', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/dev/horizon-mod'), { target: { value: 'C:/dev/mod' } });
+    fireEvent.change(screen.getByPlaceholderText('C:/Horizon/horizon-client.exe'), { target: { value: 'C:/Horizon/horizon-client.exe' } });
+    fireEvent.change(screen.getByPlaceholderText('C:/Horizon/horizon-ctl.exe'), { target: { value: 'C:/Horizon/horizon-ctl.exe' } });
+    fireEvent.change(screen.getByPlaceholderText('C:/dev/mod/target/mod.hmod'), { target: { value: 'C:/dev/mod/target/mod.hmod' } });
+    fireEvent.change(screen.getByPlaceholderText('ruby:ruby'), { target: { value: 'ruby:ruby' } });
+    fireEvent.click(screen.getByText('Test item in disposable world'));
+    expect(await screen.findByText(/Package origin NOT verified/)).toBeTruthy();
+    expect(vi.mocked(runGameItemSmoke)).toHaveBeenCalledWith(
+      'C:/Horizon/horizon-ctl.exe',
+      'C:/Horizon/horizon-client.exe',
+      'C:/dev/mod/target/mod.hmod',
+      'ruby:ruby', true,
+    );
+  });
+
   it('never builds untrusted project code after consent is declined', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false);
     render(<App />);
