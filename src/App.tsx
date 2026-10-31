@@ -6,10 +6,10 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import './App.css';
 import { MockAIProvider } from './services/ai/provider';
-import { askLocalAi, listLocalAiModels, buildContentMod, cancelBuild, checkHmodPackage, createContentStarter, getGameStatus, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
+import { askLocalAi, listLocalAiModels, buildContentMod, cancelBuild, checkHmodPackage, createContentStarter, getGameStatus, getGameWindowProbe, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
 import { useWorkspaceStore } from './store/useWorkspaceStore';
 import ProjectExplorer from './components/ProjectExplorer';
-import type { BuildDiagnostic, FileEntry, GameStatus } from './types/app';
+import type { BuildDiagnostic, FileEntry, GameStatus, NativeGameWindowProbe } from './types/app';
 
 const mockProvider = new MockAIProvider();
 
@@ -27,6 +27,8 @@ function App() {
   const [status, setStatus] = useState<GameStatus>('disconnected');
   const [gamePath, setGamePath] = useState('');
   const [gameProbe, setGameProbe] = useState('Select your installed horizon-client and check its Launch API.');
+  const [nativeGameWindow, setNativeGameWindow] = useState<NativeGameWindowProbe | null>(null);
+  const [nativeWindowBusy, setNativeWindowBusy] = useState(false);
   const [controlPath, setControlPath] = useState('');
   const [checkerPath, setCheckerPath] = useState('');
   const [starterName, setStarterName] = useState('');
@@ -305,8 +307,23 @@ function App() {
     }
   }
 
+  async function onInspectNativeWindow() {
+    if (nativeWindowBusy) return;
+    setNativeWindowBusy(true);
+    try {
+      const report = await getGameWindowProbe();
+      setNativeGameWindow(report);
+    } catch (error) {
+      setGameProbe(`Native window discovery failed: ${String(error)}`);
+      setNativeGameWindow(null);
+    } finally {
+      setNativeWindowBusy(false);
+    }
+  }
+
   async function onLaunchGame() {
     if (!window.confirm('Start Horizon in a new disposable test directory? Personal saves and game settings will not be used, and the test directory is deleted when the session ends.')) return;
+    setNativeGameWindow(null);
     setStatus('launching');
     try {
       const next = await launchGame(gamePath, []);
@@ -319,6 +336,7 @@ function App() {
   }
 
   async function onStopGame() {
+    setNativeGameWindow(null);
     try {
       await stopGame();
       setStatus('disconnected');
@@ -566,6 +584,27 @@ function App() {
               <button onClick={() => void onStopGame()} disabled={status === 'disconnected'}>Stop</button>
             </div>
             <p role="status">{gameProbe}</p>
+            <section className="game-window-diagnostic" aria-label="Native game window discovery">
+              <div className="button-row">
+                <strong>Windows native window</strong>
+                <button type="button" onClick={() => void onInspectNativeWindow()}
+                  disabled={nativeWindowBusy || status === 'disconnected' || status === 'error'}>
+                  {nativeWindowBusy ? 'Inspecting…' : 'Find native window'}
+                </button>
+              </div>
+              <p role="status">
+                {nativeGameWindow?.status === 'native-window-found' && nativeGameWindow.selected
+                  ? `Found the game window belonging to PID ${nativeGameWindow.processId}: ${nativeGameWindow.selected.title || 'Untitled'} · ${nativeGameWindow.selected.width} × ${nativeGameWindow.selected.height} pixels.`
+                  : nativeGameWindow?.status === 'no-native-window'
+                    ? 'Game process exists, but no usable top-level Windows game window has appeared yet.'
+                    : nativeGameWindow?.status === 'unsupported-platform'
+                      ? 'Native HWND discovery is supported on Windows only.'
+                      : nativeGameWindow?.status === 'not-running'
+                        ? 'The IDE does not currently own a running Horizon process.'
+                        : 'Launch your own Horizon client, then inspect its real native window.'}
+              </p>
+              <p>Window discovery only — the game is not yet embedded in this pane. No screenshot or simulated canvas is presented as gameplay.</p>
+            </section>
             <details className="smoke-tools">
               <summary>In-game content smoke test (experimental)</summary>
               <p>Requires trusted Horizon game/control binaries and the official cargo-horizon-mod checker. Checks the .hmod SHA/API/namespace first, then runs a disposable test world and validates inventory slots. Item membership not yet proven. Optionally select a folder prepared by horizon-prepare; otherwise horizon-ctl will try launcher-installed resources.</p>
