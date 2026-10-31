@@ -67,7 +67,7 @@ jobs:
           "$zipHash  HorizonIDE-Windows-preview.zip" | Set-Content -LiteralPath 'dist-portable/HorizonIDE-Windows-preview.zip.sha256' -Encoding ascii
           "### Horizon IDE (native Windows preview)" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
           "Executable: HorizonIDE.exe (bundled Tauri UI, no external dev web server)" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
-          "Unsigned preview; ZIP SHA256: `$zipHash`" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          "Unsigned preview; ZIP SHA256: $zipHash" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Upload portable native app (not a release)
         uses: actions/upload-artifact@v4
