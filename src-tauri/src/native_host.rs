@@ -119,6 +119,9 @@ mod windows {
             if !belongs_to(self.hwnd, self.pid) {
                 return Err("the owned Horizon window no longer exists or changed process".into());
             }
+            if unsafe { GetParent(self.hwnd) } != self.host {
+                return Err("Horizon HWND is no longer a child of this IDE window; refusing to move it".into());
+            }
             validate_bounds(self.host, region)?;
             position(self.hwnd, region, true)?;
             Ok(HostReport { attached_native_window: true, playable_verified: false, game_pid: self.pid,
@@ -126,6 +129,9 @@ mod windows {
         }
         pub fn detach(&self) -> Result<(), String> {
             if !belongs_to(self.hwnd, self.pid) { return Ok(()); }
+            if unsafe { GetParent(self.hwnd) } != self.host {
+                return Err("game HWND parent changed outside Horizon IDE; refusing to mutate foreign state".into());
+            }
             // Restore the original style/parent and original screen coordinates;
             // never close or kill the user's game simply to detach a viewport.
             unsafe { SetLastError(0) };
