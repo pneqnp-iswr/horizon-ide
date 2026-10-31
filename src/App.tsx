@@ -6,7 +6,7 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import './App.css';
 import { MockAIProvider } from './services/ai/provider';
-import { buildContentMod, cancelBuild, checkHmodPackage, createContentStarter, getGameStatus, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
+import { askLocalAi, buildContentMod, cancelBuild, checkHmodPackage, createContentStarter, getGameStatus, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
 import { useWorkspaceStore } from './store/useWorkspaceStore';
 import ProjectExplorer from './components/ProjectExplorer';
 import type { BuildDiagnostic, FileEntry, GameStatus } from './types/app';
@@ -38,6 +38,10 @@ function App() {
   const [smokeBusy, setSmokeBusy] = useState(false);
   const [smokeStatus, setSmokeStatus] = useState('No in-game item observation has been made.');
   const [probing, setProbing] = useState(false);
+  const [aiBackend, setAiBackend] = useState<'lmstudio' | 'ollama' | 'mock'>('lmstudio');
+  const [aiModel, setAiModel] = useState('');
+  const [aiIncludeDocument, setAiIncludeDocument] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('Create a new mob with custom AI behavior');
   const [aiResponse, setAiResponse] = useState('');
   const [diagnostics, setDiagnostics] = useState<BuildDiagnostic[]>([]);
@@ -323,8 +327,37 @@ function App() {
   }
 
   async function onAIRequest() {
-    const response = await mockProvider.generate({ prompt: aiPrompt });
-    setAiResponse(response.content);
+    if (aiBusy || !aiPrompt.trim()) return;
+    if (aiBackend === 'mock') {
+      setAiBusy(true);
+      try {
+        const response = await mockProvider.generate({ prompt: aiPrompt });
+        setAiResponse(`[Demo/mock response — no model inference]\n${response.content}`);
+      } finally {
+        setAiBusy(false);
+      }
+      return;
+    }
+    if (!aiModel.trim()) {
+      setAiResponse('Select the exact model ID loaded by your local LM Studio or Ollama server.');
+      return;
+    }
+    const content = aiIncludeDocument && selectedFile ? fileContents : null;
+    if (!window.confirm(
+      `Send this prompt${content !== null ? ' and the selected editor document' : ''} to the LOCAL ${aiBackend === 'lmstudio' ? 'LM Studio' : 'Ollama'} server on 127.0.0.1? ` +
+      'No remote API is contacted by the IDE, but your local server controls its own logging and model routing. ' +
+      'The returned suggestion will NOT be automatically applied or executed.',
+    )) return;
+    setAiBusy(true);
+    setAiResponse('Asking the local model…');
+    try {
+      const result = await askLocalAi(aiBackend, aiModel.trim(), aiPrompt, content, true);
+      setAiResponse(`[Local ${result.provider} / ${result.model}; document included: ${result.documentIncluded ? 'yes' : 'no'}]\n\n${result.content}`);
+    } catch (error) {
+      setAiResponse(`Local AI failed: ${String(error)}. No fallback response was generated.`);
+    } finally {
+      setAiBusy(false);
+    }
   }
 
   // Editor shortcuts operate inside the actual Tauri workspace, never by
@@ -441,10 +474,35 @@ function App() {
         <h2>Project Explorer</h2>
         <ProjectExplorer key={`${workspaceRoot}:${explorerRevision}`} entries={files}
           selectedPath={selectedFile} onOpenFile={openFile} />
-        <h2>AI Assistant ({mockProvider.label})</h2>
-        <textarea value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} rows={4} />
-        <button onClick={() => void onAIRequest()}>Run AI Prompt</button>
-        <pre className="ai-output">{aiResponse || 'Mock responses are clearly marked and provider is extensible.'}</pre>
+        <h2>Local AI Coding Assistant</h2>
+        <label>
+          Inference mode
+          <select value={aiBackend} onChange={(event) => setAiBackend(event.target.value as 'lmstudio' | 'ollama' | 'mock')}>
+            <option value="lmstudio">LM Studio · localhost:1234</option>
+            <option value="ollama">Ollama · localhost:11434</option>
+            <option value="mock">Demo only (mock, no real AI)</option>
+          </select>
+        </label>
+        {aiBackend !== 'mock' && (
+          <label>
+            Loaded model ID
+            <input value={aiModel} onChange={(event) => setAiModel(event.target.value)}
+              placeholder="Your local model identifier" />
+          </label>
+        )}
+        <label className="local-ai-consent">
+          <input type="checkbox" checked={aiIncludeDocument}
+            onChange={(event) => setAiIncludeDocument(event.target.checked)} />
+          Include current editor contents in prompt
+        </label>
+        <textarea value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} rows={4}
+          aria-label="Local AI prompt" />
+        <button onClick={() => void onAIRequest()} disabled={aiBusy || !aiPrompt.trim()}>
+          {aiBusy ? 'Asking local model…' : 'Ask Local AI'}
+        </button>
+        <pre className="ai-output" role="status" aria-live="polite">
+          {aiResponse || 'Local model needed. Start the LM Studio or Ollama API server; suggestions are read-only.'}
+        </pre>
       </aside>
 
       <main className="workspace" style={{ gridTemplateRows: `1fr 6px ${bottomHeight}%` }}>

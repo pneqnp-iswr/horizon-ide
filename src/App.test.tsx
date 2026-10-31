@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
-import { buildContentMod, cancelBuild, checkHmodPackage, createContentStarter, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, stopGame } from './services/tauri/client';
+import { askLocalAi, buildContentMod, cancelBuild, checkHmodPackage, createContentStarter, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, stopGame } from './services/tauri/client';
 
 vi.mock('@monaco-editor/react', () => ({
   default: ({ value, onChange }: { value: string; onChange: (text: string) => void }) => (
@@ -37,6 +37,15 @@ vi.mock('./services/tauri/client', () => ({
   launchGame: vi.fn().mockResolvedValue('running'),
   listDirectory: vi.fn().mockResolvedValue([]),
   readTextFile: vi.fn().mockResolvedValue({ contents: '', revision: 'a'.repeat(64) }),
+  askLocalAi: vi.fn().mockResolvedValue({
+    provider: 'lmstudio',
+    model: 'local-model',
+    content: 'Reviewable Rust suggestion',
+    localEndpoint: 'http://127.0.0.1:1234/v1/chat/completions',
+    documentIncluded: false,
+    proposedChangesApplied: false,
+    commandsExecuted: false,
+  }),
   buildContentMod: vi.fn().mockResolvedValue({
     succeeded: true,
     artifactPath: 'C:/dev/mod/target/horizon-mod/ruby.hmod',
@@ -109,6 +118,67 @@ afterEach(() => {
 });
 
 describe('App', () => {
+
+  it('does not send a local AI request without explicit user consent', () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('Your local model identifier'), {
+      target: { value: 'local-model' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Local AI' }));
+    expect(vi.mocked(askLocalAi)).not.toHaveBeenCalled();
+  });
+
+  it('does not expose open document to a local model unless context is opted in', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('Your local model identifier'), {
+      target: { value: 'local-model' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Local AI' }));
+    await screen.findByText(/Reviewable Rust suggestion/);
+    expect(vi.mocked(askLocalAi)).toHaveBeenCalledWith(
+      'lmstudio', 'local-model', 'Create a new mob with custom AI behavior', null, true,
+    );
+  });
+
+  it('sends selected editor contents to local AI only after opt-in', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(listDirectory).mockResolvedValueOnce([
+      { path: 'C:/dev/mod/behavior.rs', name: 'behavior.rs', is_dir: false },
+    ]);
+    vi.mocked(readTextFile).mockResolvedValueOnce({
+      contents: 'fn move_mob() {}', revision: 'a'.repeat(64),
+    });
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/dev/horizon-mod'), {
+      target: { value: 'C:/dev/mod' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Load Files' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Open file behavior.rs' }));
+    await waitFor(() => expect(vi.mocked(readTextFile)).toHaveBeenCalled());
+    fireEvent.change(screen.getByPlaceholderText('Your local model identifier'), {
+      target: { value: 'local-model' },
+    });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Include current editor contents in prompt' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Local AI' }));
+    await waitFor(() => expect(vi.mocked(askLocalAi)).toHaveBeenCalledWith(
+      'lmstudio', 'local-model', 'Create a new mob with custom AI behavior', 'fn move_mob() {}', true,
+    ));
+  });
+
+  it('reports failed local inference and never replaces it with a mock response', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(askLocalAi).mockRejectedValueOnce(new Error('local server offline'));
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('Your local model identifier'), {
+      target: { value: 'local-model' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Local AI' }));
+    expect(await screen.findByText(/Local AI failed: Error: local server offline/)).toBeTruthy();
+    expect(screen.getByText(/No fallback response was generated/)).toBeTruthy();
+  });
+
   it('Ctrl+S saves the active Monaco file through revisioned desktop IPC', async () => {
     vi.mocked(listDirectory).mockResolvedValueOnce([
       { path: 'C:/dev/mod/main.rs', name: 'main.rs', is_dir: false },

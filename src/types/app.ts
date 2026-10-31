@@ -90,3 +90,14 @@ export interface ContentBuildResult {
   staticCheckPassed: true;
   inGameVerified: false;
 }
+
+/** Local-only assistant output; a proposal, never an applied edit. */
+export interface LocalAiAnswer {
+  provider: 'lmstudio' | 'ollama';
+  model: string;
+  content: string;
+  localEndpoint: string;
+  documentIncluded: boolean;
+  proposedChangesApplied: false;
+  commandsExecuted: false;
+}
