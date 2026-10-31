@@ -27,6 +27,7 @@ function App() {
   const [gamePath, setGamePath] = useState('');
   const [gameProbe, setGameProbe] = useState('Select your installed horizon-client and check its Launch API.');
   const [controlPath, setControlPath] = useState('');
+  const [checkerPath, setCheckerPath] = useState('');
   const [packagePath, setPackagePath] = useState('');
   const [targetItemId, setTargetItemId] = useState('');
   const [smokeBusy, setSmokeBusy] = useState(false);
@@ -178,20 +179,22 @@ function App() {
   }
 
   async function onGameItemSmoke() {
-    if (!gamePath || !controlPath || !packagePath || !targetItemId || !workspaceRoot || smokeBusy) return;
+    if (!gamePath || !controlPath || !checkerPath || !packagePath || !targetItemId || !workspaceRoot || smokeBusy) return;
     if (!window.confirm(
       'Launch your trusted Horizon client and horizon-ctl into a NEW disposable test world? ' +
       'The selected .hmod is native content that will be loaded with user privileges. ' +
       'This test attempts give/inventory commands, then quit. No personal saves are deliberately used. ' +
-      'Only an inventory observation is verified; package provenance and gameplay are not.',
+      'The official cargo-horizon-mod checker must validate package SHA, mod ID, API and namespace. ' +
+      'Only an inventory observation is verified; individual item membership and gameplay are not.',
     )) return;
     setSmokeBusy(true);
     setSmokeStatus('Running isolated Horizon inventory smoke test…');
     try {
       await setWorkspaceRoot(workspaceRoot);
-      const report = await runGameItemSmoke(controlPath, gamePath, packagePath, targetItemId, true);
+      const report = await runGameItemSmoke(controlPath, gamePath, checkerPath, packagePath, targetItemId, true);
       setSmokeStatus(
         `Observed ${report.itemId}: ${report.before} → ${report.after}, slots: ${report.changedSlots.join(', ')}. ` +
+        `Official static check passed for ${report.staticAttestation.modId}. ` +
         'Package origin NOT verified.',
       );
       setBuildOutput(JSON.stringify(report, null, 2));
@@ -323,10 +326,14 @@ function App() {
             <p role="status">{gameProbe}</p>
             <details className="smoke-tools">
               <summary>In-game content smoke test (experimental)</summary>
-              <p>Requires trusted horizon-client and horizon-ctl installed side by side. Runs a disposable test world and checks inventory slots, not package origin.</p>
+              <p>Requires trusted Horizon game/control binaries and the official cargo-horizon-mod checker. Checks the .hmod SHA/API/namespace first, then runs a disposable test world and validates inventory slots. Item membership not yet proven.</p>
               <label>
                 horizon-ctl path
                 <input value={controlPath} onChange={(event) => setControlPath(event.target.value)} placeholder="C:/Horizon/horizon-ctl.exe" />
+              </label>
+              <label>
+                Official cargo-horizon-mod executable
+                <input value={checkerPath} onChange={(event) => setCheckerPath(event.target.value)} placeholder="C:/Users/dev/.cargo/bin/cargo-horizon-mod.exe" />
               </label>
               <label>
                 Built .hmod path (inside workspace)
@@ -338,7 +345,7 @@ function App() {
               </label>
               <button onClick={() => void onGameItemSmoke()} disabled={
                 smokeBusy || status === 'running' || status === 'launching' ||
-                !workspaceRoot || !controlPath || !gamePath || !packagePath || !targetItemId
+                !workspaceRoot || !controlPath || !checkerPath || !gamePath || !packagePath || !targetItemId
               }>
                 {smokeBusy ? 'Testing in game…' : 'Test item in disposable world'}
               </button>
