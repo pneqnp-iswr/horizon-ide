@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { BuildResult, ContentAttestation, CreatedContentProject, DocumentSnapshot, FileEntry, GameItemSmokeReport, GameStatus, HorizonInstallationReport } from '../../types/app';
+import type { BuildResult, ContentAttestation, ContentBuildResult, CreatedContentProject, DocumentSnapshot, FileEntry, GameItemSmokeReport, GameStatus, HorizonInstallationReport } from '../../types/app';
 
 export async function setWorkspaceRoot(path: string): Promise<void> {
   await invoke('set_workspace_root', { path });
@@ -76,4 +76,13 @@ export async function createContentStarter(
   return invoke<CreatedContentProject>('create_content_starter', {
     toolPath, parentWorkspace, name, approved,
   });
+}
+
+/** Tauri IPC, not a browser build service. Requires an approved official tool. */
+export async function buildContentMod(
+  toolPath: string,
+  workspacePath: string,
+  approved: boolean,
+): Promise<ContentBuildResult> {
+  return invoke<ContentBuildResult>('build_content_mod', { toolPath, workspacePath, approved });
 }
