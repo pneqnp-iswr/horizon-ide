@@ -1,0 +1,25 @@
+{
+  "name": "@horizon/game-view",
+  "version": "0.0.0",
+  "private": true,
+  "keywords": [
+    "theia-extension"
+  ],
+  "license": "MIT",
+  "main": "lib/browser/horizon-game-frontend-module.js",
+  "files": [
+    "lib",
+    "src"
+  ],
+  "theiaExtensions": [
+    {
+      "frontend": "lib/browser/horizon-game-frontend-module"
+    }
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@theia/core": "1.76.0"
+  }
+}
