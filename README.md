@@ -12,14 +12,14 @@ The product goal is one seamless application with a **directly playable Horizon 
 | --- | --- | --- |
 | Desktop workspace | Tauri 2, React + TypeScript, Monaco, xterm.js, adjustable panels and theme | A game is playable inside a WebView |
 | Source editor | Workspace-root path confinement; UTF-8 source snapshots with SHA-256 revisions, conflict-aware atomic saves and an unsaved-edits indicator | Race-free multi-editor collaboration |
-| Game client | User-selected `horizon-client[.exe]`, checked with `--launch-api`; owned OS process status, Stop, restart | A mod has loaded in a real game |
+| Game client | User-selected `horizon-client[.exe]`, checked with `--launch-api`; owned process lifecycle, disposable sessions and exact-PID Win32 native HWND discovery | A window was embedded or a mod was loaded in a real game |
 | Session isolation | Per-launch disposable `--game-dir` and `--home`, cleaned on normal exit | Native mods are sandboxed (they are not) |
 | Item smoke (experimental) | Explicitly approved `horizon-ctl` launch with isolated game world, strict `inventory`/`give` checks and evidence panel | An inventory observation proves the selected `.hmod` defines that item; package origin is **not** verified |
 | Build runner | Explicit per-run consent, async `cargo check --locked`, JSON compiler diagnostics, bounded output/time and cancellation | Cargo build scripts cannot run code (they can) |
 | Official content mod workflow | `cargo-horizon-mod new`, real `.hmod` build, official checksum check, and package auto-selection for isolated smoke | That the running game actually accepted the archive or its content |
-| AI | Real native loopback-only LM Studio/Ollama chat adapter, local model discovery, opt-in document context and read-only suggestions; optional mock demo | Automatic patch application, remote services or autonomous coding agent |
+| AI | Real loopback-only LM Studio/Ollama adapter, local model discovery, opt-in source context, **Monaco DiffEditor** and approved buffer-only single-file patch/Undo | Silent disk writes, autonomous agent, unapproved builds or automatic gameplay testing |
 
-**Integration status:** Desktop foundation (#1), runtime hardening (#2), revisioned saves (#7), bounded Cargo builds (#8), isolated sessions (#9), Game Bridge (#10), official `.hmod` verification (#11), nested Project Explorer (#12), genuine official project creation (#13), and selected prepared resources (#14) are merged to `master`. [#16: Build .hmod](https://github.com/pneqnp-iswr/horizon-ide/pull/16) is also merged and has passed Linux/Windows CI. These changes do not prove real game loading or an embedded playable viewport.
+**Integration status:** Desktop foundation (#1), runtime hardening (#2), revisioned saves (#7), bounded Cargo builds (#8), isolated sessions (#9), Game Bridge (#10), official `.hmod` verification (#11), nested Project Explorer (#12), genuine official project creation (#13), and selected prepared resources (#14) are merged to `master`. [#16: Build .hmod](https://github.com/pneqnp-iswr/horizon-ide/pull/16), [#18: Windows executable](https://github.com/pneqnp-iswr/horizon-ide/pull/18), [#19: shortcuts](https://github.com/pneqnp-iswr/horizon-ide/pull/19), [#20: local AI](https://github.com/pneqnp-iswr/horizon-ide/pull/20), [#22: native HWND discovery](https://github.com/pneqnp-iswr/horizon-ide/pull/22) and [#23: reviewed AI diffs](https://github.com/pneqnp-iswr/horizon-ide/pull/23) are also merged and have passed Linux/Windows CI. These changes do not prove real game loading or an embedded playable viewport.
 
 ## Windows desktop app
 
@@ -46,7 +46,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --no-default-features
 
 ## Local AI in the Windows desktop app
 
-Use **Local AI Coding Assistant** in the sidebar, select LM Studio or Ollama, and choose **Discover local models**. The IDE connects only to the specified local model server and sends the editor document only when you explicitly opt in. Responses are proposed text, not automatically applied changes. See [Local AI desktop guide](docs/LOCAL_AI_DESKTOP.md).
+Use **Local AI Coding Assistant** in the sidebar, select LM Studio or Ollama, and choose **Discover local models**. The IDE connects only to the specified local model server and sends the editor document only when you explicitly opt in. Use **Propose file edit (review diff)** for an explicit single-file edit preview in Monaco DiffEditor. **Apply to editor** updates the buffer only; Save, Build and Game Smoke remain separate actions requiring their own safeguards. See [Local AI desktop guide](docs/LOCAL_AI_DESKTOP.md) and [Reviewed AI edits](docs/REVIEWED_AI_EDITS.md).
 
 ## Planned live-edit loop
 
@@ -56,6 +56,8 @@ Use **Local AI Coding Assistant** in the sidebar, select LM Studio or Ollama, an
 4. Stage a mod into an **isolated** Horizon preview world.
 5. Use upstream `horizon-ctl` to verify a real content change (inventory/scene assertions, logs); retain engine commit and artifact SHA-256.
 6. Display errors and let a developer undo and repeat.
+
+An opt-in Windows `SetParent` game-window host is being tested as [draft PR #24](https://github.com/pneqnp-iswr/horizon-ide/pull/24); it is **not** validated gameplay and is not part of stable `master`. See [Windows native game viewport](docs/WINDOWS_GAME_VIEWPORT.md).
 
 Native source-mixin Rust mods normally **compile into a custom game executable and require restart**; do not promise runtime hot replacement. Studio-only 3D/VFX previews and screenshots are not real in-game proof.
 
@@ -69,6 +71,6 @@ Our priorities are tracked in [#3 real game tests](https://github.com/pneqnp-isw
 - Accessibility, configurable layouts, English-first UI with planned Russian translation, keyboard-driven workflow.
 - Explain evidence honestly: **schema-valid → builds → game-loaded → gameplay-tested** are different levels.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md), [ROADMAP.md](ROADMAP.md), [SECURITY.md](SECURITY.md), [Runtime Contract](docs/HORIZON_RUNTIME_CONTRACT.md), [Windows App](docs/WINDOWS_APP.md), [Official Starter](docs/OFFICIAL_STARTER.md), [Content Build](docs/CONTENT_BUILD.md), [Build Security](docs/BUILD_SECURITY.md), and [Experimental Game Item Smoke](docs/GAME_ITEM_SMOKE.md).
+See [ARCHITECTURE.md](ARCHITECTURE.md), [ROADMAP.md](ROADMAP.md), [SECURITY.md](SECURITY.md), [Runtime Contract](docs/HORIZON_RUNTIME_CONTRACT.md), [Windows App](docs/WINDOWS_APP.md), [Reviewed AI Edits](docs/REVIEWED_AI_EDITS.md), [Windows Game Viewport](docs/WINDOWS_GAME_VIEWPORT.md), [Official Starter](docs/OFFICIAL_STARTER.md), [Content Build](docs/CONTENT_BUILD.md), [Build Security](docs/BUILD_SECURITY.md), and [Experimental Game Item Smoke](docs/GAME_ITEM_SMOKE.md).
 
 License: MIT. Horizon IDE is an independent project and is not endorsed by Mojang, Microsoft or Horizon maintainers.
