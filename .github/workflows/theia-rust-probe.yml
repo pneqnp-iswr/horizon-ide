@@ -1,0 +1,32 @@
+name: Theia read-only Rust bridge probe
+
+on:
+  pull_request:
+    paths:
+      - 'spikes/theia-desktop/rust-sidecar/**'
+      - '.github/workflows/theia-rust-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust-bridge-windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test Rust read-only sidecar
+        run: cargo test --manifest-path spikes/theia-desktop/rust-sidecar/Cargo.toml
+      - name: Build real Rust sidecar process
+        run: cargo build --manifest-path spikes/theia-desktop/rust-sidecar/Cargo.toml
+      - name: Assert exact protocol and no gameplay claims
+        shell: pwsh
+        run: |
+          $exe = "spikes/theia-desktop/rust-sidecar/target/debug/horizon-ide-sidecar-spike.exe"
+          $result = & $exe --probe | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Sidecar probe failed' }
+          if ($result.protocolVersion -ne 1 -or $result.backend -ne 'rust-sidecar' -or $result.status -ne 'ready') { throw 'Unexpected probe version' }
+          if ($result.gameConnected -ne $false -or $result.viewportPlayableVerified -ne $false) { throw 'Unverified gameplay claim' }
+          & $exe --forbidden 2>$null
+          if ($LASTEXITCODE -eq 0) { throw 'Unknown command must be refused' }
