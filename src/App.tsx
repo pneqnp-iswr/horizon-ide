@@ -381,7 +381,9 @@ function App() {
     setNativeAttachBusy(true);
     try {
       const report = await attachNativeGame(rect, true);
-      setNativeAttached(report.attachedNativeWindow);
+      // Even when reparenting partially failed, keep Detach enabled if Rust
+      // retained a HWND recovery handle. Do not claim playable rendering.
+      setNativeAttached(report.attachedNativeWindow || report.recoveryRequired);
       setNativeAttachNotice(report.message);
     } catch (error) {
       setNativeAttached(false);
