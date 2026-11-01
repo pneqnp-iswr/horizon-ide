@@ -16,6 +16,8 @@ pub struct ViewportRect {
 #[serde(rename_all = "camelCase")]
 pub struct HostReport {
     pub attached_native_window: bool,
+    // True only when the IDE still retains a HWND requiring a recovery action.
+    pub recovery_required: bool,
     pub playable_verified: bool,
     pub game_pid: u32,
     pub message: String,
@@ -135,6 +137,9 @@ mod windows {
 
     impl HostedWindow {
         pub fn pid(&self) -> u32 { self.pid }
+        pub fn is_attached(&self) -> bool {
+            belongs_to(self.hwnd, self.pid) && unsafe { GetParent(self.hwnd) } == self.host
+        }
         pub fn resize(&self, region: ViewportRect) -> Result<HostReport, String> {
             if !belongs_to(self.hwnd, self.pid) {
                 return Err("the owned Horizon window no longer exists or changed process".into());
@@ -144,7 +149,8 @@ mod windows {
             }
             validate_bounds(self.host, region)?;
             position(self.hwnd, region, true)?;
-            Ok(HostReport { attached_native_window: true, playable_verified: false, game_pid: self.pid,
+            Ok(HostReport { attached_native_window: true, recovery_required: false,
+                playable_verified: false, game_pid: self.pid,
                 message: "Native Win32 child resized; real WGPU rendering and game controls remain unverified".into() })
         }
         pub fn detach(&self) -> Result<(), String> {
@@ -222,10 +228,9 @@ mod windows {
         }
         let attached = HostedWindow { pid: game_pid, hwnd, host,
             previous_parent, previous_style, previous_position: old };
-        if let Err(e) = attached.resize(region) {
-            let _ = attached.detach();
-            return Err(e);
-        }
+        // The caller must retain HostedWindow BEFORE the first resize.
+        // If SetWindowPos fails and detach also fails, dropping this object
+        // would orphan a cross-process HWND with no path to retry recovery.
         Ok(attached)
     }
 
