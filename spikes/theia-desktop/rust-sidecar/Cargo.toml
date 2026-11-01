@@ -1,0 +1,9 @@
+[package]
+name = "horizon-ide-sidecar-spike"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+# This proof binary does not yet expose the existing src-tauri backend.
+# It proves a deliberately tiny, read-only Electron -> Rust transport.
