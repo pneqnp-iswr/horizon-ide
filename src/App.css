@@ -58,6 +58,16 @@ button:disabled { opacity: .6; cursor: default; }
 .panel { background: var(--bg); padding: 10px; border-bottom: 1px solid var(--border); display: grid; gap: 8px; min-width: 0; }
 .panel header { display: flex; align-items: center; justify-content: space-between; }
 .game-panel { overflow: auto; align-content: start; grid-auto-rows: max-content; }
+.native-host-controls { border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+.native-host-controls .button-row { flex-wrap: wrap; }
+.native-host-controls button { font-size: 11px; padding: 6px 7px; }
+.native-host-controls p { margin: 7px 0 0; font-size: 11px; line-height: 1.5; color: var(--muted); }
+.native-host-surface { position: relative; min-height: 190px; height: min(28vh, 265px); border: 1px dashed var(--border);
+  border-radius: 6px; background: #090c12; display: grid; place-items: center; overflow: hidden; }
+.native-host-surface > div { padding: 16px; text-align: center; }
+.native-host-surface strong { font-size: 12px; }
+.native-host-surface p { font-size: 11px; line-height: 1.5; color: #8da0b8; }
+.native-viewport-attached { border-style: solid; border-color: var(--accent); }
 .game-window-diagnostic { border: 1px solid var(--border); border-radius: 6px; padding: 10px; display: grid; gap: 7px; }
 .game-window-diagnostic .button-row { justify-content: space-between; align-items: center; }
 .game-window-diagnostic strong { font-size: 12px; }

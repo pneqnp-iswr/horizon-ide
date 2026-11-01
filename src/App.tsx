@@ -8,15 +8,16 @@ import './App.css';
 import { MockAIProvider } from './services/ai/provider';
 import { isProposalCurrent, parseLocalAiEditProposal } from './services/ai/editProposal';
 import type { ReviewedEditProposal } from './services/ai/editProposal';
-import { askLocalAi, listLocalAiModels, buildContentMod, cancelBuild, checkHmodPackage, createContentStarter, getGameStatus, getGameWindowProbe, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
+import { attachNativeGame, detachNativeGame, resizeNativeGame, askLocalAi, listLocalAiModels, buildContentMod, cancelBuild, checkHmodPackage, createContentStarter, getGameStatus, getGameWindowProbe, inspectHorizonClient, launchGame, listDirectory, readTextFile, runBuild, runGameItemSmoke, saveTextFile, setWorkspaceRoot, stopGame } from './services/tauri/client';
 import { useWorkspaceStore } from './store/useWorkspaceStore';
 import ProjectExplorer from './components/ProjectExplorer';
-import type { BuildDiagnostic, FileEntry, GameStatus, NativeGameWindowProbe } from './types/app';
+import type { BuildDiagnostic, FileEntry, GameStatus, NativeGameWindowProbe, NativeViewportRect } from './types/app';
 
 const mockProvider = new MockAIProvider();
 
 function App() {
   const terminalRef = useRef<HTMLDivElement | null>(null);
+  const nativeViewportRef = useRef<HTMLDivElement | null>(null);
   const terminalInstanceRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const [files, setFiles] = useState<FileEntry[]>([]);
@@ -31,6 +32,9 @@ function App() {
   const [gameProbe, setGameProbe] = useState('Select your installed horizon-client and check its Launch API.');
   const [nativeGameWindow, setNativeGameWindow] = useState<NativeGameWindowProbe | null>(null);
   const [nativeWindowBusy, setNativeWindowBusy] = useState(false);
+  const [nativeAttachBusy, setNativeAttachBusy] = useState(false);
+  const [nativeAttached, setNativeAttached] = useState(false);
+  const [nativeAttachNotice, setNativeAttachNotice] = useState('Experimental Win32 viewport; actual gameplay not yet verified.');
   const [controlPath, setControlPath] = useState('');
   const [checkerPath, setCheckerPath] = useState('');
   const [starterName, setStarterName] = useState('');
@@ -344,8 +348,127 @@ function App() {
     }
   }
 
+  function nativeViewportRect(): NativeViewportRect | null {
+    const element = nativeViewportRef.current;
+    if (!element) return null;
+    const box = element.getBoundingClientRect();
+    const scale = window.devicePixelRatio || 1;
+    const rect = {
+      x: Math.round(box.left * scale),
+      y: Math.round(box.top * scale),
+      width: Math.round(box.width * scale),
+      height: Math.round(box.height * scale),
+    };
+    const visiblePane = element.closest('.game-panel')?.getBoundingClientRect();
+    if (rect.width < 240 || rect.height < 160 || rect.x < 0 || rect.y < 0
+      || box.bottom > window.innerHeight || box.right > window.innerWidth
+      || (visiblePane && (box.top < visiblePane.top || box.bottom > visiblePane.bottom))) return null;
+    return rect;
+  }
+
+  async function onAttachNativeGame() {
+    if (nativeAttachBusy || nativeAttached || !nativeGameWindow?.selected || status !== 'running') return;
+    const rect = nativeViewportRect();
+    if (!rect) {
+      setNativeAttachNotice('Reserved native viewport is too small or not fully visible; resize the IDE.');
+      return;
+    }
+    if (!window.confirm(
+      'EXPERIMENTAL Win32 hosting: reparent the IDE-owned Horizon game window to the Tauri window? ' +
+      'Cross-process window parenting can affect DPI, GPU rendering, focus and cursor capture. ' +
+      'The child can be detached, but real Horizon gameplay is not yet validated. Continue?',
+    )) return;
+    setNativeAttachBusy(true);
+    try {
+      const report = await attachNativeGame(rect, true);
+      // Even when reparenting partially failed, keep Detach enabled if Rust
+      // retained a HWND recovery handle. Do not claim playable rendering.
+      setNativeAttached(report.attachedNativeWindow || report.recoveryRequired);
+      setNativeAttachNotice(report.message);
+    } catch (error) {
+      setNativeAttached(false);
+      setNativeAttachNotice('Native attach refused: ' + String(error) + '. The game remains external.');
+    } finally {
+      setNativeAttachBusy(false);
+    }
+  }
+
+  async function onDetachNativeGame() {
+    if (nativeAttachBusy) return;
+    setNativeAttachBusy(true);
+    try {
+      await detachNativeGame();
+      setNativeAttached(false);
+      setNativeAttachNotice('Native game window detached to its original desktop parent and placement.');
+    } catch (error) {
+      setNativeAttachNotice('Native detach failed: ' + String(error) + '. Stop the game for recovery.');
+    } finally {
+      setNativeAttachBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (nativeAttached && (status === 'disconnected' || status === 'error')) {
+      void detachNativeGame().finally(() => {
+        setNativeAttached(false);
+        setNativeAttachNotice('IDE-owned Horizon process exited; experimental native host was released.');
+      });
+    }
+  }, [nativeAttached, status]);
+
+  useEffect(() => {
+    if (!nativeAttached) return;
+    const element = nativeViewportRef.current;
+    if (!element) return;
+    let frame = 0;
+    let active = true;
+    const requestFrame = window.requestAnimationFrame?.bind(window)
+      ?? ((callback: FrameRequestCallback) => window.setTimeout(callback, 16));
+    const cancelFrame = window.cancelAnimationFrame?.bind(window) ?? window.clearTimeout.bind(window);
+    const sync = () => {
+      if (frame) cancelFrame(frame);
+      frame = requestFrame(() => {
+        frame = 0;
+        if (!active) return;
+        const rect = nativeViewportRect();
+        if (!rect) {
+          void detachNativeGame().then(() => {
+            if (!active) return;
+            setNativeAttached(false);
+            setNativeAttachNotice('Native game detached because its viewport left the visible IDE area.');
+          }).catch((error) => {
+            if (active) setNativeAttachNotice('Native viewport recovery: ' + String(error));
+          });
+          return;
+        }
+        void resizeNativeGame(rect).catch((error) => {
+          void detachNativeGame().then(() => {
+            if (!active) return;
+            setNativeAttached(false);
+            setNativeAttachNotice('Native resize refused; game detached: ' + String(error));
+          }).catch((detachError) => {
+            if (active) setNativeAttachNotice('Native resize and detach both failed: ' + String(detachError));
+          });
+        });
+      });
+    };
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(sync) : null;
+    observer?.observe(element);
+    window.addEventListener('resize', sync);
+    window.addEventListener('scroll', sync, true);
+    sync();
+    return () => {
+      active = false;
+      if (frame) cancelFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener('resize', sync);
+      window.removeEventListener('scroll', sync, true);
+    };
+  }, [nativeAttached, leftWidth, bottomHeight]);
+
   async function onLaunchGame() {
     if (!window.confirm('Start Horizon in a new disposable test directory? Personal saves and game settings will not be used, and the test directory is deleted when the session ends.')) return;
+    setNativeAttached(false);
     setNativeGameWindow(null);
     setStatus('launching');
     try {
@@ -359,6 +482,10 @@ function App() {
   }
 
   async function onStopGame() {
+    if (nativeAttached) {
+      try { await detachNativeGame(); } catch { /* Stop remains available */ }
+      setNativeAttached(false);
+    }
     setNativeGameWindow(null);
     try {
       await stopGame();
@@ -713,6 +840,27 @@ function App() {
               </p>
               <p>Window discovery only — the game is not yet embedded in this pane. No screenshot or simulated canvas is presented as gameplay.</p>
             </section>
+            <div className="native-host-controls">
+              <div className="button-row">
+                <button type="button" onClick={() => void onAttachNativeGame()}
+                  disabled={nativeAttachBusy || nativeAttached || !nativeGameWindow?.selected || status !== 'running'}>
+                  {nativeAttachBusy ? 'Attaching…' : 'Attach to IDE (experimental)'}
+                </button>
+                <button type="button" onClick={() => void onDetachNativeGame()}
+                  disabled={nativeAttachBusy || !nativeAttached}>Detach native window</button>
+              </div>
+              <p role="status">{nativeAttachNotice}</p>
+            </div>
+            <div ref={nativeViewportRef}
+              className={nativeAttached ? 'native-host-surface native-viewport-attached' : 'native-host-surface'}
+              aria-label="Experimental native Horizon game host">
+              {!nativeAttached && (
+                <div>
+                  <strong>Reserved native game viewport</strong>
+                  <p>A real Win32 child-window host; no simulated gameplay or screenshot.</p>
+                </div>
+              )}
+            </div>
             <details className="smoke-tools">
               <summary>In-game content smoke test (experimental)</summary>
               <p>Requires trusted Horizon game/control binaries and the official cargo-horizon-mod checker. Checks the .hmod SHA/API/namespace first, then runs a disposable test world and validates inventory slots. Item membership not yet proven. Optionally select a folder prepared by horizon-prepare; otherwise horizon-ctl will try launcher-installed resources.</p>

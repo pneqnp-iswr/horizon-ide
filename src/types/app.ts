@@ -9,6 +9,22 @@ export interface NativeGameWindow {
 }
 
 /** Native Win32 HWND discovery is not an embedded or playable game viewport. */
+export interface NativeViewportRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface ExperimentalNativeHostReport {
+  attachedNativeWindow: boolean;
+  /** A partially failed attach still has a native HWND managed by the IDE. */
+  recoveryRequired: boolean;
+  playableVerified: false;
+  gamePid: number;
+  message: string;
+}
+
 export interface NativeGameWindowProbe {
   status: 'not-running' | 'native-window-found' | 'no-native-window' | 'unsupported-platform';
   processId: number | null;

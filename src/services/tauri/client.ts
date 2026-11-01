@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { BuildResult, ContentAttestation, ContentBuildResult, CreatedContentProject, DocumentSnapshot, FileEntry, GameItemSmokeReport, GameStatus, HorizonInstallationReport, LocalAiAnswer, LocalAiModels, NativeGameWindowProbe } from '../../types/app';
+import type { BuildResult, ContentAttestation, ContentBuildResult, CreatedContentProject, DocumentSnapshot, FileEntry, GameItemSmokeReport, GameStatus, HorizonInstallationReport, LocalAiAnswer, LocalAiModels, NativeGameWindowProbe, NativeViewportRect, ExperimentalNativeHostReport } from '../../types/app';
 
 export async function setWorkspaceRoot(path: string): Promise<void> {
   await invoke('set_workspace_root', { path });
@@ -103,4 +103,17 @@ export async function listLocalAiModels(provider: 'lmstudio' | 'ollama'): Promis
 /** Probe only the actual Windows HWND of an IDE-owned Horizon process. */
 export async function getGameWindowProbe(): Promise<NativeGameWindowProbe> {
   return invoke<NativeGameWindowProbe>('get_game_window_probe');
+}
+
+/** Experimental Windows child-window operation. Never any arbitrary HWND/PID. */
+export async function attachNativeGame(rect: NativeViewportRect, approved: boolean): Promise<ExperimentalNativeHostReport> {
+  return invoke<ExperimentalNativeHostReport>('attach_native_game', { rect, approved });
+}
+
+export async function resizeNativeGame(rect: NativeViewportRect): Promise<ExperimentalNativeHostReport> {
+  return invoke<ExperimentalNativeHostReport>('resize_native_game', { rect });
+}
+
+export async function detachNativeGame(): Promise<void> {
+  await invoke('detach_native_game');
 }
