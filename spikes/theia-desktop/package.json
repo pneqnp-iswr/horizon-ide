@@ -1,0 +1,64 @@
+{
+  "name": "horizon-theia-desktop-spike",
+  "private": true,
+  "version": "0.1.0-spike",
+  "productName": "Horizon IDE Theia Spike",
+  "main": "lib/backend/electron-main.js",
+  "workspaces": [
+    "extensions/*"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "theia": {
+    "target": "electron",
+    "frontend": {
+      "config": {
+        "applicationName": "Horizon IDE — Theia Spike",
+        "electron": {
+          "appUserModelId": "Horizon.IDE.TheiaSpike"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build:extension": "npm run build --workspace=@horizon/game-view",
+    "rebuild:electron": "theia rebuild:electron --cacheRoot .",
+    "build": "npm run build:extension && npm run rebuild:electron && theia build --mode development",
+    "start": "theia start",
+    "check:extension": "npm run build:extension"
+  },
+  "dependencies": {
+    "@theia/core": "1.76.0",
+    "@theia/electron": "1.76.0",
+    "@theia/editor": "1.76.0",
+    "@theia/filesystem": "1.76.0",
+    "@theia/file-search": "1.76.0",
+    "@theia/monaco": "1.76.0",
+    "@theia/navigator": "1.76.0",
+    "@theia/workspace": "1.76.0",
+    "@theia/terminal": "1.76.0",
+    "@theia/process": "1.76.0",
+    "@theia/search-in-workspace": "1.76.0",
+    "@theia/markers": "1.76.0",
+    "@theia/preferences": "1.76.0",
+    "@theia/keymaps": "1.76.0",
+    "@theia/output": "1.76.0",
+    "@theia/scm": "1.76.0",
+    "@theia/debug": "1.76.0",
+    "@theia/task": "1.76.0",
+    "@theia/plugin-ext": "1.76.0",
+    "@theia/plugin-ext-vscode": "1.76.0",
+    "@theia/vsx-registry": "1.76.0",
+    "@horizon/game-view": "0.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@theia/cli": "1.76.0",
+    "electron": "42.8.1",
+    "typescript": "~5.9.3",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0"
+  }
+}
