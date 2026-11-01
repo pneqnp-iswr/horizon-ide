@@ -1,0 +1,44 @@
+name: Theia desktop foundation spike
+
+on:
+  pull_request:
+    paths:
+      - 'spikes/theia-desktop/**'
+      - '.github/workflows/theia-desktop-spike.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  theia-windows-build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: spikes/theia-desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install Theia spike dependencies
+        run: npm install --no-audit --no-fund
+      - name: Compile and typecheck Theia custom extension
+        run: npm run check:extension
+      - name: Build Electron-targeted Theia application
+        run: npm run build
+      - name: Test Rust sidecar
+        run: cargo test --manifest-path rust-sidecar/Cargo.toml
+      - name: Build and probe the Rust process
+        run: |
+          cargo build --manifest-path rust-sidecar/Cargo.toml
+          $probe = & "rust-sidecar/target/debug/horizon-ide-sidecar-spike.exe" --probe | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $probe.protocolVersion -ne 1 -or $probe.backend -ne 'rust-sidecar' -or $probe.status -ne 'ready' -or $probe.gameConnected -ne $false -or $probe.viewportPlayableVerified -ne $false) {
+            throw 'Unexpected Rust protocol response'
+          }
+      - name: State non-verified gates
+        run: |
+          Write-Output 'Electron compilation and Rust CLI checks do NOT establish interactive GUI.'
+          Write-Output 'Game window, WGPU frames, input, installer and performance remain unverified.'
