@@ -626,9 +626,16 @@ fn attach_native_game(
         return Err(AppError::NativeHost("explicit permission is required for experimental Win32 reparenting".into()));
     }
     refresh_game_process(&state);
-    let pid = state.game_process.lock().expect("game process lock poisoned")
-        .as_ref().map(std::process::Child::id)
+    // Stop and status polling acquire process before native host. Keep the
+    // process lock throughout attach, so Stop cannot kill the owned Child
+    // between selecting its PID and installing our hosted HWND state.
+    let mut process = state.game_process.lock().expect("game process lock poisoned");
+    let child = process.as_mut()
         .ok_or_else(|| AppError::NativeHost("no IDE-owned running Horizon game process".into()))?;
+    if child.try_wait()?.is_some() {
+        return Err(AppError::NativeHost("Horizon exited before native attach".into()));
+    }
+    let pid = child.id();
     let mut guard = state.game_native_host.lock().expect("native host lock poisoned");
     if guard.is_some() {
         return Err(AppError::NativeHost("game native HWND is already attached; detach it first".into()));
