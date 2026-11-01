@@ -28,5 +28,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Sidecar probe failed' }
           if ($result.protocolVersion -ne 1 -or $result.backend -ne 'rust-sidecar' -or $result.status -ne 'ready') { throw 'Unexpected probe version' }
           if ($result.gameConnected -ne $false -or $result.viewportPlayableVerified -ne $false) { throw 'Unverified gameplay claim' }
-          & $exe --forbidden 2>$null
-          if ($LASTEXITCODE -eq 0) { throw 'Unknown command must be refused' }
+          $errPath = Join-Path $env:RUNNER_TEMP 'sidecar-expected-error.txt'
+          $rejected = Start-Process -FilePath (Resolve-Path $exe).Path -ArgumentList '--forbidden' -Wait -PassThru -NoNewWindow -RedirectStandardError $errPath
+          if ($rejected.ExitCode -ne 2) { throw 'Unknown command must exit with code 2' }
+          Write-Output 'Probe passed; unsupported operation refused as expected.'
