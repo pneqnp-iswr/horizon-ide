@@ -57,7 +57,7 @@
   "devDependencies": {
     "@theia/cli": "1.76.0",
     "electron": "42.8.1",
-    "typescript": "~6.0.3",
+    "typescript": "~5.9.3",
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0"
   }
