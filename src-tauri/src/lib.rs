@@ -643,9 +643,35 @@ fn attach_native_game(
     let host = window.hwnd().map_err(|error| AppError::NativeHost(error.to_string()))?;
     let hosted = native_host::attach_game(host.0 as isize, pid, rect)
         .map_err(AppError::NativeHost)?;
+    // Store the recovery handle before placement: a failed SetWindowPos
+    // must never orphan a HWND if subsequent detach also fails.
     *guard = Some(hosted);
+    if let Err(place_error) = guard.as_ref().expect("just stored native host").resize(rect) {
+        match guard.as_ref().expect("just stored native host").detach() {
+            Ok(()) => {
+                *guard = None;
+                return Err(AppError::NativeHost(format!(
+                    "native game placement failed; original desktop window restored: {place_error}"
+                )));
+            }
+            Err(restore_error) => {
+                let still_parented = guard.as_ref()
+                    .expect("recovery host retained").is_attached();
+                return Ok(native_host::HostReport {
+                    attached_native_window: still_parented,
+                    recovery_required: true,
+                    playable_verified: false,
+                    game_pid: pid,
+                    message: format!(
+                        "RECOVERY REQUIRED: native placement failed ({place_error}); detach also failed ({restore_error}). Retry Detach native window or Stop the disposable game. No gameplay verified."
+                    ),
+                });
+            }
+        }
+    }
     Ok(native_host::HostReport {
-        attached_native_window: true, playable_verified: false, game_pid: pid,
+        attached_native_window: true, recovery_required: false,
+        playable_verified: false, game_pid: pid,
         message: "Win32 child window attached experimentally. Rendering, cursor/focus, DPI and gameplay have NOT been tested on a real Horizon installation.".into(),
     })
 }
