@@ -104,6 +104,26 @@ mod windows {
         Ok(())
     }
 
+    // Win32 permits a zero previous value on success. Always clear last-error
+    // before querying or changing styles, then test both the return and error.
+    fn read_style(hwnd: isize) -> Result<isize, String> {
+        unsafe { SetLastError(0) };
+        let style = unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) };
+        if style == 0 && unsafe { GetLastError() } != 0 {
+            return Err(error("could not read original Horizon window style"));
+        }
+        Ok(style)
+    }
+
+    fn write_style(hwnd: isize, style: isize) -> Result<(), String> {
+        unsafe { SetLastError(0) };
+        let old = unsafe { SetWindowLongPtrW(hwnd, GWL_STYLE, style) };
+        if old == 0 && unsafe { GetLastError() } != 0 {
+            return Err(error("could not update Horizon window style"));
+        }
+        Ok(())
+    }
+
     fn position(hwnd: isize, region: ViewportRect, zorder: bool) -> Result<(), String> {
         let flags = SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED
             | if zorder { 0 } else { SWP_NOZORDER };
@@ -129,17 +149,22 @@ mod windows {
         }
         pub fn detach(&self) -> Result<(), String> {
             if !belongs_to(self.hwnd, self.pid) { return Ok(()); }
-            if unsafe { GetParent(self.hwnd) } != self.host {
+            let parent = unsafe { GetParent(self.hwnd) };
+            if parent != self.host && parent != self.previous_parent {
                 return Err("game HWND parent changed outside Horizon IDE; refusing to mutate foreign state".into());
             }
-            // Restore the original style/parent and original screen coordinates;
-            // never close or kill the user's game simply to detach a viewport.
-            unsafe { SetLastError(0) };
-            unsafe { SetParent(self.hwnd, self.previous_parent) };
-            if unsafe { GetLastError() } != 0 {
-                return Err(error("could not detach the game window"));
+            // A previous detach can have restored the parent but failed while
+            // restoring style/placement. Permit a retry for our exact HWND/PID.
+            if parent == self.host {
+                unsafe { SetLastError(0) };
+                unsafe { SetParent(self.hwnd, self.previous_parent) };
+                if unsafe { GetParent(self.hwnd) } != self.previous_parent {
+                    return Err(error("could not detach the game window"));
+                }
             }
-            unsafe { SetWindowLongPtrW(self.hwnd, GWL_STYLE, self.previous_style) };
+            // With a desktop parent, WS_CHILD must be cleared and original
+            // popup/caption flags restored; never silently claim recovery.
+            write_style(self.hwnd, self.previous_style)?;
             let old = self.previous_position;
             if unsafe { SetWindowPos(self.hwnd, 0, old.left, old.top,
                 old.right.saturating_sub(old.left), old.bottom.saturating_sub(old.top),
@@ -175,22 +200,25 @@ mod windows {
         if unsafe { GetWindowRect(hwnd, &mut old) } == 0 {
             return Err(error("could not capture original game window placement"));
         }
-        let previous_style = unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) };
+        let previous_style = read_style(hwnd)?;
         let previous_parent = unsafe { GetParent(hwnd) };
         unsafe { SetLastError(0) };
         // The genuine game needs client-area pixels, not an extra desktop
         // caption/titlebar nested inside the IDE. Restore every bit on detach.
         let decorations = WS_POPUP | WS_CAPTION | WS_THICKFRAME
             | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
-        unsafe { SetWindowLongPtrW(hwnd, GWL_STYLE, (previous_style & !decorations) | WS_CHILD) };
-        if unsafe { GetLastError() } != 0 {
-            return Err(error("could not set child-window style"));
-        }
+        write_style(hwnd, (previous_style & !decorations) | WS_CHILD)?;
         unsafe { SetLastError(0) };
         unsafe { SetParent(hwnd, host) };
-        if unsafe { GetLastError() } != 0 {
-            unsafe { SetWindowLongPtrW(hwnd, GWL_STYLE, previous_style) };
-            return Err(error("native SetParent refused game surface"));
+        // The previous parent can legitimately be NULL on a successful call.
+        // Inspect actual parentage, not just SetParent's ambiguous return.
+        let parent_error = unsafe { GetLastError() };
+        if unsafe { GetParent(hwnd) } != host {
+            let rollback = write_style(hwnd, previous_style);
+            return Err(match rollback {
+                Ok(()) => format!("native SetParent refused game surface (Win32 error {parent_error})"),
+                Err(e) => format!("native SetParent failed (Win32 error {parent_error}); style rollback failed: {e}"),
+            });
         }
         let attached = HostedWindow { pid: game_pid, hwnd, host,
             previous_parent, previous_style, previous_position: old };
