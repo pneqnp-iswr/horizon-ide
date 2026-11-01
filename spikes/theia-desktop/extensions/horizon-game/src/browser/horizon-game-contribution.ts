@@ -20,7 +20,6 @@ export class HorizonGameContribution extends AbstractViewContribution<HorizonGam
     }
 
     registerCommands(registry: CommandRegistry): void {
-        super.registerCommands(registry);
         registry.registerCommand(HorizonGameCommand, {
             execute: () => this.openView({ activate: true, reveal: true })
         });
