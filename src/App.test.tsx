@@ -33,11 +33,11 @@ vi.mock('@xterm/addon-fit', () => ({
 vi.mock('./services/tauri/client', () => ({
   getGameStatus: vi.fn().mockResolvedValue('disconnected'),
   attachNativeGame: vi.fn().mockResolvedValue({
-    attachedNativeWindow: true, playableVerified: false, gamePid: 1234,
+    attachedNativeWindow: true, recoveryRequired: false, playableVerified: false, gamePid: 1234,
     message: 'Win32 child attached; no gameplay evidence',
   }),
   resizeNativeGame: vi.fn().mockResolvedValue({
-    attachedNativeWindow: true, playableVerified: false, gamePid: 1234,
+    attachedNativeWindow: true, recoveryRequired: false, playableVerified: false, gamePid: 1234,
     message: 'Native resized; gameplay unverified',
   }),
   detachNativeGame: vi.fn().mockResolvedValue(undefined),
@@ -391,6 +391,35 @@ describe('App', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Detach native window' }));
     await waitFor(() => expect(vi.mocked(detachNativeGame)).toHaveBeenCalled());
     expect(screen.getByText(/original desktop parent/)).toBeTruthy();
+  });
+
+  it('retains a manual recovery path after partial Win32 reparenting failure', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(attachNativeGame).mockResolvedValueOnce({
+      attachedNativeWindow: false, recoveryRequired: true,
+      playableVerified: false, gamePid: 1234,
+      message: 'RECOVERY REQUIRED: window placement failed; retry Detach',
+    });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.getAttribute('aria-label') === 'Experimental native Horizon game host')
+        return { left: 200, top: 160, right: 850, bottom: 420, width: 650, height: 260 } as DOMRect;
+      if (this.classList.contains('game-panel'))
+        return { left: 150, top: 50, right: 1000, bottom: 700, width: 850, height: 650 } as DOMRect;
+      return { left: 0, top: 0, right: 1000, bottom: 700, width: 1000, height: 700 } as DOMRect;
+    });
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('C:/Horizon/horizon-client.exe'),
+      { target: { value: 'C:/Horizon/horizon-client.exe' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Launch' }));
+    await screen.findByText('Running');
+    fireEvent.click(screen.getByRole('button', { name: 'Find native window' }));
+    await screen.findByText(/Found the game window belonging to PID 1234/);
+    fireEvent.click(screen.getByRole('button', { name: 'Attach to IDE (experimental)' }));
+    expect(await screen.findByText(/RECOVERY REQUIRED/)).toBeTruthy();
+    const detach = screen.getByRole('button', { name: 'Detach native window' }) as HTMLButtonElement;
+    expect(detach.disabled).toBe(false);
+    fireEvent.click(detach);
+    await waitFor(() => expect(vi.mocked(detachNativeGame)).toHaveBeenCalled());
   });
 
   it('finds only the actual owned native game window and does not claim embedded gameplay', async () => {
