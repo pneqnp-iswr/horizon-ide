@@ -18,6 +18,8 @@ export interface NativeViewportRect {
 
 export interface ExperimentalNativeHostReport {
   attachedNativeWindow: boolean;
+  /** A partially failed attach still has a native HWND managed by the IDE. */
+  recoveryRequired: boolean;
   playableVerified: false;
   gamePid: number;
   message: string;
