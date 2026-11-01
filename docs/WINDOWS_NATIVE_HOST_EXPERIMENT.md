@@ -7,7 +7,8 @@ This is a **native Windows/Tauri proof of concept**, not a website and not a scr
 - An experimental **Attach to IDE** button (disabled unless the IDE's native HWND inspection found a visible, usable, top-level window belonging to its owned Horizon process).
 - Explicit warning/consent before calling Win32 User32 `SetParent`.
 - Rust checks game PID again before attachment, verifies matching DPI awareness, validates region coordinates against the Tauri **physical client rect**, remembers original style/parent/screen placement, sets child-window style, and positions the resulting HWND. No caller-supplied foreign HWND or arbitrary process IDs.
-- **Detach native window** attempts to restore the original parent, style and screen placement. Game Stop and runtime Drop attempt to detach before terminating the separately owned disposable game.
+- **Detach native window** attempts to restore the original parent, style and screen placement. Style operations check Win32 errors and partial detach is retryable for the exact same HWND/PID. Game Stop and runtime Drop attempt to detach before terminating the separately owned disposable game.
+- Parentage is checked after `SetParent` (a successful call may have a NULL previous parent). Attach/Stop share a process lock so Stop cannot race after PID selection. The IDE retains a recovery handle before the first `SetWindowPos`; if both placement and automatic detach fail, `recoveryRequired` is reported and the manual Detach action stays available.
 - ResizeObserver, window resize and scroll synchronize the native physical window region with the Tauri desktop viewport; the app attempts to detach if the view is clipped, hidden or invalid.
 - Pure Rust tests for invalid/overflowing viewport bounds and React tests for explicit consent and detach. Windows Tauri compile and native portable ZIP build are required.
 
