@@ -13,7 +13,8 @@
   ],
   "theiaExtensions": [
     {
-      "frontend": "lib/browser/horizon-game-frontend-module"
+      "frontend": "lib/browser/horizon-game-frontend-module",
+      "backend": "lib/node/horizon-bridge-backend-module"
     }
   ],
   "scripts": {
